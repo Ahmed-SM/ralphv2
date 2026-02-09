@@ -1,0 +1,32 @@
+{
+  "type": "jira",
+  "baseUrl": "https://your-domain.atlassian.net",
+  "project": "RALPH",
+  "issueTypeMap": {
+    "epic": "Epic",
+    "feature": "Story",
+    "task": "Task",
+    "subtask": "Sub-task",
+    "bug": "Bug",
+    "refactor": "Task",
+    "docs": "Task",
+    "test": "Task",
+    "spike": "Spike"
+  },
+  "statusMap": {
+    "discovered": "Backlog",
+    "pending": "To Do",
+    "in_progress": "In Progress",
+    "blocked": "Blocked",
+    "review": "In Review",
+    "done": "Done",
+    "cancelled": "Cancelled"
+  },
+  "autoCreate": false,
+  "autoTransition": true,
+  "autoComment": true,
+  "customFields": {
+    "epicLink": "customfield_10014",
+    "storyPoints": "customfield_10016"
+  }
+}

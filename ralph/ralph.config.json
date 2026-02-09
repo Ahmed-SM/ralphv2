@@ -1,0 +1,53 @@
+{
+  "$schema": "./schemas/config.schema.json",
+  "planFile": "./implementation-plan.md",
+  "agentsFile": "./AGENTS.md",
+
+  "loop": {
+    "maxIterationsPerTask": 10,
+    "maxTimePerTask": 1800000,
+    "maxCostPerTask": 5,
+    "maxTasksPerRun": 50,
+    "maxTimePerRun": 14400000,
+    "onFailure": "continue",
+    "parallelism": 1
+  },
+
+  "sandbox": {
+    "enabled": true,
+    "timeout": 30000,
+    "memory": 512,
+    "maxCommands": 100,
+    "allowedPaths": [".", "state", "skills", "runtime", "specs", "agents"],
+    "deniedPaths": ["node_modules", ".git/objects"],
+    "deniedCommands": ["rm -rf /", "sudo"],
+    "cacheReads": true
+  },
+
+  "tracker": {
+    "type": "jira",
+    "configPath": "./integrations/jira/config.json",
+    "autoCreate": false,
+    "autoTransition": true,
+    "autoComment": true
+  },
+
+  "git": {
+    "autoCommit": true,
+    "commitPrefix": "RALPH-",
+    "branchPrefix": "ralph/"
+  },
+
+  "learning": {
+    "enabled": true,
+    "autoApplyImprovements": false,
+    "minConfidence": 0.7,
+    "retentionDays": 90
+  },
+
+  "notifications": {
+    "onAnomaly": true,
+    "onComplete": false,
+    "channel": "console"
+  }
+}

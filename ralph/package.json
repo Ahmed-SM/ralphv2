@@ -1,0 +1,57 @@
+{
+  "name": "ralph",
+  "version": "0.1.0",
+  "description": "Agentic Delivery OS - Self-evolving task management",
+  "type": "module",
+  "main": "dist/runtime/index.js",
+  "bin": {
+    "ralph": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch runtime/index.ts",
+    "start": "node dist/runtime/index.js",
+    "test": "vitest",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "ralph": "tsx runtime/index.ts",
+    "discover": "tsx skills/discovery/cli.ts",
+    "discover:dry": "tsx skills/discovery/cli.ts --dry-run",
+    "sync": "tsx skills/normalize/cli.ts",
+    "watch": "tsx skills/track/cli.ts",
+    "learn": "tsx skills/discovery/learn-cli.ts",
+    "learn:dry": "tsx skills/discovery/learn-cli.ts --dry-run"
+  },
+  "dependencies": {
+    "@types/mdast": "^4.0.0",
+    "remark": "^15.0.0",
+    "remark-gfm": "^4.0.0",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.0",
+    "unist-util-visit": "^5.0.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "eslint": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/ralph"
+  },
+  "keywords": [
+    "agentic",
+    "delivery",
+    "task-management",
+    "jira",
+    "automation",
+    "ai-agents"
+  ],
+  "license": "MIT"
+}

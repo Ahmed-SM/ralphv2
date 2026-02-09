@@ -1,0 +1,53 @@
+# Claude Code local data
+.claude/
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+*.js
+*.js.map
+*.d.ts
+!jest.config.js
+!vitest.config.js
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+credentials.json
+secrets.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Temporary files
+.ralph-eval-*.ts
+*.tmp
+*.temp
+
+# Package manager locks (keep one)
+# package-lock.json
+# pnpm-lock.yaml
+
+# Runtime state (optional - uncomment to track)
+# ralph/state/*.jsonl
