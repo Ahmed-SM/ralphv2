@@ -167,7 +167,7 @@ async function pickNextTask(context: LoopContext): Promise<Task | null> {
 /**
  * Derive current task state from operation log
  */
-function deriveTaskState(log: TaskOperation[]): Map<string, Task> {
+export function deriveTaskState(log: TaskOperation[]): Map<string, Task> {
   const tasks = new Map<string, Task>();
 
   for (const op of log) {
@@ -222,7 +222,7 @@ function deriveTaskState(log: TaskOperation[]): Map<string, Task> {
 /**
  * Check if a task is blocked
  */
-function isBlocked(task: Task, allTasks: Map<string, Task>): boolean {
+export function isBlocked(task: Task, allTasks: Map<string, Task>): boolean {
   if (!task.blockedBy || task.blockedBy.length === 0) {
     return false;
   }

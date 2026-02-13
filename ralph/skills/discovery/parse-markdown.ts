@@ -200,6 +200,10 @@ function extractText(node: Content | Root): string {
     return (node as Text).value;
   }
 
+  if (node.type === 'inlineCode') {
+    return (node as { type: 'inlineCode'; value: string }).value;
+  }
+
   if ('children' in node && Array.isArray(node.children)) {
     return node.children.map(child => extractText(child as Content)).join('');
   }

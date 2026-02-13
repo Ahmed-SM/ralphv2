@@ -80,7 +80,7 @@ Build Ralph: a self-evolving agentic delivery system that reads specs, extracts 
 
 ## Current Task
 
-**All Core Phases Complete**
+**Unit Test Suite Added**
 
 Ralph v1 MVP is now functional with:
 - Task discovery from markdown specs
@@ -88,12 +88,29 @@ Ralph v1 MVP is now functional with:
 - Git activity watching
 - Learning system with pattern detection
 - Sandboxed execution environment
+- Unit test suite (127 tests across 6 core modules)
+
+### Test Coverage (Phase 7) ✅ COMPLETE
+- [x] parse-markdown.ts — 12 tests (parsing, metadata extraction, task list flattening)
+- [x] extract-tasks.ts — 19 tests (task extraction, ID generation, type inference, epic parsing)
+- [x] parse-commits.ts — 36 tests (git log parsing, task ID extraction, action inference, branch parsing)
+- [x] link-commits.ts — 18 tests (commit-task linking, status inference, aggregation, orphan detection)
+- [x] infer-status.ts — 25 tests (status inference from git/PR/branch, anomaly detection, batch inference)
+- [x] loop.ts (deriveTaskState, isBlocked) — 17 tests (operation replay, task blocking logic)
+
+### Bug Fix
+- [x] Fixed `extractText` in parse-markdown.ts to handle `inlineCode` nodes (backtick text was silently dropped)
+
+### Exported for Testability
+- [x] Exported `deriveTaskState` and `isBlocked` from runtime/loop.ts
 
 Next steps for production readiness:
 1. Add LLM integration for intelligent task execution
 2. Live testing with Jira credentials
 3. Live testing with actual git repository
 4. Add more tracker adapters (GitHub Issues, Linear)
+5. Integration tests for full discovery and git-watcher pipelines
+6. Property-based tests for edge cases in parsing modules
 
 ## Dependencies
 
