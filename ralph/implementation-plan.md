@@ -88,7 +88,7 @@ Ralph v1 MVP is now functional with:
 - Git activity watching
 - Learning system with pattern detection
 - Sandboxed execution environment
-- Unit test suite (289 tests across 11 core modules)
+- Unit test suite (367 tests across 15 core modules)
 
 ### Test Coverage (Phase 7) ✅ COMPLETE
 - [x] parse-markdown.ts — 12 tests (parsing, metadata extraction, task list flattening)
@@ -113,6 +113,12 @@ Ralph v1 MVP is now functional with:
 - [x] sandbox.ts — 55 tests (file overlay read/write/delete, pending changes, flush to disk, rollback, reset, path allow/deny, command allow/deny/limits, resource tracking, execution log, caching, env vars)
 - [x] executor.ts — 24 tests (createExecutor factory, bash delegation, readFile/writeFile through sandbox, flush/rollback, getPendingChanges, getSandbox, GitOperations: status/add/commit/log/diff/branch/checkout)
 
+### Test Coverage (Phase 10) ✅ COMPLETE
+- [x] tracker-interface.ts — 26 tests (taskToIssue mapping, formatDescription, mapStatusToRalph, factory registration/creation)
+- [x] create-issue.ts — 16 tests (single/batch issue creation, subtask handling, hierarchy sorting, link operation generation, error handling)
+- [x] update-status.ts — 21 tests (status updates, transition matching, push/pull/auto sync, batch sync, operation generation)
+- [x] sync.ts — 15 tests (syncToTracker push, syncFromTracker pull, bidirectional sync, filtering, force updates, error recording)
+
 Next steps for production readiness:
 1. Add LLM integration for intelligent task execution
 2. Live testing with Jira credentials
@@ -120,7 +126,6 @@ Next steps for production readiness:
 4. Add more tracker adapters (GitHub Issues, Linear)
 5. Integration tests for full discovery and git-watcher pipelines
 6. Property-based tests for edge cases in parsing modules
-7. Unit tests for remaining modules (normalize/)
 
 ## Dependencies
 
