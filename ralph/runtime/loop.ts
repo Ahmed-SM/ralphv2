@@ -140,7 +140,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
 /**
  * Pick the next task to work on
  */
-async function pickNextTask(context: LoopContext): Promise<Task | null> {
+export async function pickNextTask(context: LoopContext): Promise<Task | null> {
   const tasksLog = await readJsonl<TaskOperation>(
     context.executor,
     './state/tasks.jsonl'
@@ -236,7 +236,7 @@ export function isBlocked(task: Task, allTasks: Map<string, Task>): boolean {
 /**
  * Execute the inner task loop
  */
-async function executeTaskLoop(
+export async function executeTaskLoop(
   context: LoopContext,
   task: Task
 ): Promise<{ success: boolean; iterations: number; reason?: string }> {
@@ -302,7 +302,7 @@ async function executeTaskLoop(
  * This is where the actual agent work happens.
  * TODO: Integrate with LLM for intelligent execution
  */
-async function executeIteration(
+export async function executeIteration(
   context: LoopContext,
   task: Task,
   iteration: number
@@ -346,7 +346,7 @@ async function executeIteration(
 /**
  * Update task status
  */
-async function updateTaskStatus(
+export async function updateTaskStatus(
   context: LoopContext,
   taskId: string,
   status: Task['status'],
@@ -379,7 +379,7 @@ async function updateTaskStatus(
 /**
  * Record task completion for learning
  */
-async function recordTaskCompletion(
+export async function recordTaskCompletion(
   context: LoopContext,
   task: Task,
   result: { success: boolean; iterations: number; reason?: string }
@@ -409,7 +409,7 @@ async function recordTaskCompletion(
 /**
  * Read JSONL file
  */
-async function readJsonl<T>(executor: Executor, path: string): Promise<T[]> {
+export async function readJsonl<T>(executor: Executor, path: string): Promise<T[]> {
   try {
     const content = await executor.readFile(path);
     if (!content.trim()) return [];
@@ -427,7 +427,7 @@ async function readJsonl<T>(executor: Executor, path: string): Promise<T[]> {
 /**
  * Append to JSONL file
  */
-async function appendJsonl(
+export async function appendJsonl(
   executor: Executor,
   path: string,
   data: unknown

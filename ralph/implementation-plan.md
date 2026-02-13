@@ -88,7 +88,7 @@ Ralph v1 MVP is now functional with:
 - Git activity watching
 - Learning system with pattern detection
 - Sandboxed execution environment
-- Unit test suite (620 tests across 19 core modules)
+- Unit test suite (679 tests across 20 core modules)
 - Property-based test suite (79 tests across 4 parsing/state modules)
 - Integration test suite (56 tests across 3 pipelines, including live git)
 
@@ -190,6 +190,18 @@ Ralph v1 MVP is now functional with:
 - [x] API error handling (descriptive errors, response body in message, empty response body)
 - [x] Request URL construction (baseUrl + /rest/api/3 prefix)
 - [x] Registration (jira factory registered in tracker registry)
+
+### Loop Orchestration Tests (Phase 18) ✅ COMPLETE
+- [x] Exported loop internals for testability (pickNextTask, executeTaskLoop, executeIteration, updateTaskStatus, recordTaskCompletion, readJsonl, appendJsonl)
+- [x] readJsonl — 7 tests (empty/missing/whitespace files, single/multiple line parsing, blank line skipping, TaskOperation parsing)
+- [x] appendJsonl — 3 tests (file creation, append to existing, content preservation)
+- [x] pickNextTask — 12 tests (empty/missing/done/cancelled tasks, pending/discovered selection, in_progress priority, oldest-first ordering, blocked task skipping, operation log replay, review/blocked status filtering)
+- [x] executeIteration — 6 tests (spec exists → complete, missing spec, discovered tasks, pending tasks, empty spec, no spec field)
+- [x] executeTaskLoop — 5 tests (first-iteration completion, max iterations limit, progress event writing, time limit, iteration count)
+- [x] updateTaskStatus — 7 tests (update operation appending, completedAt on done, no completedAt on non-done, progress event with reason, no progress without reason, append to existing operations)
+- [x] recordTaskCompletion — 5 tests (task_completed event, failure with blockers, undefined blockers, complexity recording, filesChanged/linesChanged defaults)
+- [x] Loop orchestration scenarios — 14 tests (multi-task processing, dependency ordering, in_progress resume, all-done detection, status accumulation, learning accumulation, progress logging)
+- [x] Total: 59 new tests (814 total across 27 test files)
 
 Next steps for production readiness:
 1. Add LLM integration for intelligent task execution
