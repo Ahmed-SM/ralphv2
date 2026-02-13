@@ -88,7 +88,7 @@ Ralph v1 MVP is now functional with:
 - Git activity watching
 - Learning system with pattern detection
 - Sandboxed execution environment
-- Unit test suite (473 tests across 17 core modules)
+- Unit test suite (543 tests across 18 core modules)
 - Property-based test suite (79 tests across 4 parsing/state modules)
 - Integration test suite (56 tests across 3 pipelines, including live git)
 
@@ -155,11 +155,26 @@ Ralph v1 MVP is now functional with:
 - [x] Register adapter in tracker factory
 - [x] Unit tests — 60 tests (constructor, auth, healthCheck, CRUD, transitions, subtasks, linking, comments, type inference, error handling, registration)
 
+### Linear Adapter (Phase 16) ✅ COMPLETE
+- [x] Implement LinearAdapter → [integrations/linear/adapter.ts](./integrations/linear/adapter.ts)
+- [x] GraphQL API integration (queries and mutations)
+- [x] Issue CRUD (create, get, update, find with filters)
+- [x] Project creation for epics (epic → Linear Project)
+- [x] Sub-issue creation via parentId
+- [x] Issue relation creation (blocks, related, duplicate)
+- [x] Workflow state transitions via state resolution
+- [x] Label resolution by name
+- [x] Comment creation
+- [x] Dry-run mode support
+- [x] Token and OAuth authentication
+- [x] Register adapter in tracker factory
+- [x] Unit tests — 70 tests (constructor, auth headers, healthCheck, CRUD, transitions, subtasks, linking, comments, type inference, project mapping, error handling, dry-run, registration)
+
 Next steps for production readiness:
 1. Add LLM integration for intelligent task execution
 2. Live testing with Jira credentials
 3. Live testing with actual git repository
-4. Add Linear tracker adapter
+4. Live testing with Linear API key
 
 ## Dependencies
 

@@ -2,21 +2,25 @@
 
 > Instructions for integrating Ralph with Linear.
 
-## Status: Planned
+## Status: Implemented
 
-This integration is planned for Phase 3+.
+Adapter implemented in [adapter.ts](./adapter.ts) with 70 unit tests.
 
 ## Overview
 
 Linear is a modern issue tracker popular with startups. Its API is GraphQL-based.
 
-## Planned Features
+## Features
 
-- Create issues from tasks
+- Create issues from tasks (via GraphQL mutations)
 - Create projects from epics
-- Sync status bidirectionally
-- Track cycles
-- Link to PRs via GitHub integration
+- Sub-issue creation via parentId
+- Issue relation creation (blocks, related, duplicate)
+- Workflow state transitions
+- Label resolution by name
+- Comment creation
+- Dry-run mode support
+- Token and OAuth authentication
 
 ## Mapping
 
@@ -54,7 +58,7 @@ mutation {
 export RALPH_LINEAR_API_KEY=lin_api_...
 ```
 
-## Configuration (Planned)
+## Configuration
 
 ```json
 {
