@@ -20,6 +20,11 @@ import type {
   LearningEvent,
 } from '../types/index.js';
 import { createExecutor, Executor, GitOperations } from './executor.js';
+import type {
+  TrackerConfig,
+  AuthConfig,
+} from '../skills/normalize/tracker-interface.js';
+import { createTracker } from '../skills/normalize/tracker-interface.js';
 
 export interface LoopContext {
   config: RuntimeConfig;
@@ -122,7 +127,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     }
 
     // 7. Sync to tracker (if configured)
-    // TODO: Implement tracker sync
+    await syncTaskToTracker(context, task, taskResult.success);
   }
 
   result.duration = Date.now() - startTime;
@@ -400,6 +405,134 @@ export async function recordTaskCompletion(
   };
 
   await appendJsonl(context.executor, './state/learning.jsonl', event);
+}
+
+// =============================================================================
+// TRACKER SYNC
+// =============================================================================
+
+/**
+ * Get tracker auth from environment variables
+ */
+export function getTrackerAuth(trackerType: string): AuthConfig | null {
+  const prefix = trackerType.toUpperCase().replace(/-/g, '_');
+
+  const token =
+    process.env[`RALPH_${prefix}_TOKEN`] || process.env[`${prefix}_TOKEN`];
+  const email =
+    process.env[`RALPH_${prefix}_EMAIL`] || process.env[`${prefix}_EMAIL`];
+
+  if (!token) return null;
+
+  return {
+    type: 'token',
+    token,
+    email,
+  };
+}
+
+/**
+ * Sync a completed task to the external tracker.
+ *
+ * Handles three operations based on config flags:
+ * - autoCreate: creates a new issue if the task has no externalId
+ * - autoTransition: transitions the issue to match the task status
+ * - autoComment: adds a completion/failure comment
+ *
+ * Errors are logged but never crash the loop.
+ */
+export async function syncTaskToTracker(
+  context: LoopContext,
+  task: Task,
+  success: boolean
+): Promise<void> {
+  const { config, executor } = context;
+  const trackerConfig = config.tracker;
+
+  // Skip if no auto-sync features enabled
+  if (
+    !trackerConfig.autoCreate &&
+    !trackerConfig.autoTransition &&
+    !trackerConfig.autoComment
+  ) {
+    return;
+  }
+
+  try {
+    // Load tracker configuration
+    const trackerConfigContent = await executor.readFile(
+      trackerConfig.configPath
+    );
+    const fullConfig: TrackerConfig = JSON.parse(trackerConfigContent);
+
+    // Get auth from environment
+    const auth = getTrackerAuth(trackerConfig.type);
+    if (!auth) {
+      console.log('  Tracker sync skipped: missing credentials');
+      return;
+    }
+
+    // Load adapter module to ensure registration
+    await loadTrackerAdapter(trackerConfig.type);
+
+    // Create tracker instance
+    const tracker = await createTracker(fullConfig, auth);
+
+    if (task.externalId) {
+      // Task already linked — update status and/or comment
+      if (trackerConfig.autoTransition) {
+        const targetStatus = fullConfig.statusMap[task.status];
+        if (targetStatus) {
+          await tracker.transitionIssue(task.externalId, targetStatus);
+          console.log(
+            `  Tracker: transitioned ${task.externalId} → ${targetStatus}`
+          );
+        }
+      }
+
+      if (trackerConfig.autoComment) {
+        const comment = success
+          ? `Task completed successfully by Ralph.`
+          : `Task marked as ${task.status} by Ralph.`;
+        await tracker.addComment(task.externalId, comment);
+        console.log(`  Tracker: commented on ${task.externalId}`);
+      }
+    } else if (trackerConfig.autoCreate) {
+      // Create new issue
+      const issue = await tracker.createIssue(task);
+
+      // Record the link
+      const linkOp: TaskOperation = {
+        op: 'link',
+        id: task.id,
+        externalId: issue.key,
+        externalUrl: issue.url,
+        timestamp: new Date().toISOString(),
+      };
+      await appendJsonl(executor, './state/tasks.jsonl', linkOp);
+      console.log(`  Tracker: created ${issue.key} for ${task.id}`);
+    }
+  } catch (error) {
+    // Don't crash the loop for tracker failures
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.log(`  Tracker sync failed for ${task.id}: ${message}`);
+  }
+}
+
+/**
+ * Dynamically load a tracker adapter module to trigger its registerTracker side-effect.
+ */
+async function loadTrackerAdapter(type: string): Promise<void> {
+  const adapterPaths: Record<string, string> = {
+    jira: '../integrations/jira/adapter.js',
+    'github-issues': '../integrations/github-issues/adapter.js',
+    linear: '../integrations/linear/adapter.js',
+  };
+
+  const path = adapterPaths[type];
+  if (path) {
+    await import(path);
+  }
 }
 
 // =============================================================================

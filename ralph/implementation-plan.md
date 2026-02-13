@@ -203,6 +203,19 @@ Ralph v1 MVP is now functional with:
 - [x] Loop orchestration scenarios — 14 tests (multi-task processing, dependency ordering, in_progress resume, all-done detection, status accumulation, learning accumulation, progress logging)
 - [x] Total: 59 new tests (814 total across 27 test files)
 
+### Tracker Sync in Main Loop (Phase 19) ✅ COMPLETE
+- [x] Implemented `syncTaskToTracker()` in runtime/loop.ts — syncs completed/failed tasks to external tracker
+- [x] Implemented `getTrackerAuth()` — reads tracker credentials from RALPH_ or plain env vars
+- [x] Implemented `loadTrackerAdapter()` — dynamically loads adapter modules for side-effect registration
+- [x] Wired tracker sync into `runLoop()` step 7 (was a TODO placeholder)
+- [x] Handles autoCreate (creates issues for unlinked tasks), autoTransition (transitions linked issues), autoComment (adds completion/failure comments)
+- [x] Graceful error handling — tracker failures are logged but never crash the loop
+- [x] Records link operations in tasks.jsonl when new issues are created
+- [x] Exported `syncTaskToTracker` and `getTrackerAuth` from runtime/index.ts
+- [x] getTrackerAuth — 6 tests (missing creds, RALPH_ prefix, fallback env vars, hyphen→underscore, linear type, token-only auth)
+- [x] syncTaskToTracker — 16 tests (skip when flags disabled, skip on missing creds, create issue, record link op, transition issue, success comment, failure comment, no-create without flag, no-transition without flag, no-comment without flag, error resilience, error logging, missing config file, unmapped status, combined transition+comment, non-Error thrown objects)
+- [x] Total: 22 new tests (836 total across 27 test files)
+
 Next steps for production readiness:
 1. Add LLM integration for intelligent task execution
 2. Live testing with Jira credentials

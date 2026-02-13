@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   runLoop,
   pickNextTask,
@@ -6,6 +6,8 @@ import {
   executeIteration,
   updateTaskStatus,
   recordTaskCompletion,
+  syncTaskToTracker,
+  getTrackerAuth,
   readJsonl,
   appendJsonl,
   type LoopContext,
@@ -13,6 +15,8 @@ import {
 import type { Executor } from './executor.js';
 import { GitOperations } from './executor.js';
 import type { Task, TaskOperation, RuntimeConfig } from '../types/index.js';
+import { registerTracker } from '../skills/normalize/tracker-interface.js';
+import type { Tracker, TrackerConfig, AuthConfig } from '../skills/normalize/tracker-interface.js';
 
 // =============================================================================
 // HELPERS
@@ -1014,3 +1018,428 @@ describe('loop orchestration scenarios', () => {
     }
   });
 });
+
+// =============================================================================
+// getTrackerAuth TESTS
+// =============================================================================
+
+describe('getTrackerAuth', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it('returns null when no token is available', () => {
+    delete process.env.RALPH_JIRA_TOKEN;
+    delete process.env.JIRA_TOKEN;
+    const result = getTrackerAuth('jira');
+    expect(result).toBeNull();
+  });
+
+  it('reads RALPH_ prefixed token', () => {
+    process.env.RALPH_JIRA_TOKEN = 'my-token';
+    process.env.RALPH_JIRA_EMAIL = 'me@example.com';
+    const result = getTrackerAuth('jira');
+    expect(result).toEqual({
+      type: 'token',
+      token: 'my-token',
+      email: 'me@example.com',
+    });
+  });
+
+  it('falls back to non-prefixed env vars', () => {
+    delete process.env.RALPH_JIRA_TOKEN;
+    process.env.JIRA_TOKEN = 'fallback-token';
+    const result = getTrackerAuth('jira');
+    expect(result).not.toBeNull();
+    expect(result!.token).toBe('fallback-token');
+  });
+
+  it('handles github-issues type with hyphen→underscore', () => {
+    process.env.RALPH_GITHUB_ISSUES_TOKEN = 'gh-token';
+    const result = getTrackerAuth('github-issues');
+    expect(result).not.toBeNull();
+    expect(result!.token).toBe('gh-token');
+  });
+
+  it('handles linear type', () => {
+    process.env.LINEAR_TOKEN = 'lin-token';
+    process.env.LINEAR_EMAIL = 'lin@example.com';
+    const result = getTrackerAuth('linear');
+    expect(result).toEqual({
+      type: 'token',
+      token: 'lin-token',
+      email: 'lin@example.com',
+    });
+  });
+
+  it('returns auth with undefined email when only token is set', () => {
+    process.env.JIRA_TOKEN = 'tok';
+    delete process.env.RALPH_JIRA_EMAIL;
+    delete process.env.JIRA_EMAIL;
+    const result = getTrackerAuth('jira');
+    expect(result).not.toBeNull();
+    expect(result!.token).toBe('tok');
+    expect(result!.email).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// syncTaskToTracker TESTS
+// =============================================================================
+
+describe('syncTaskToTracker', () => {
+  const originalEnv = process.env;
+
+  // A minimal tracker config JSON for the mock filesystem
+  const trackerConfigJson: TrackerConfig = {
+    type: 'jira',
+    baseUrl: 'https://test.atlassian.net',
+    project: 'TEST',
+    issueTypeMap: {
+      epic: 'Epic',
+      feature: 'Story',
+      task: 'Task',
+      subtask: 'Sub-task',
+      bug: 'Bug',
+      refactor: 'Task',
+      docs: 'Task',
+      test: 'Task',
+      spike: 'Spike',
+    },
+    statusMap: {
+      discovered: 'To Do',
+      pending: 'To Do',
+      in_progress: 'In Progress',
+      blocked: 'Blocked',
+      review: 'In Review',
+      done: 'Done',
+      cancelled: 'Cancelled',
+    },
+    autoCreate: true,
+    autoTransition: true,
+    autoComment: true,
+  };
+
+  let mockTracker: Tracker;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    mockTracker = {
+      name: 'test-tracker',
+      connect: vi.fn(async () => {}),
+      disconnect: vi.fn(async () => {}),
+      healthCheck: vi.fn(async () => ({ healthy: true })),
+      createIssue: vi.fn(async (task: Task) => ({
+        id: '10001',
+        key: `TEST-${task.id}`,
+        url: `https://test.atlassian.net/browse/TEST-${task.id}`,
+        title: task.title,
+        description: task.description,
+        status: 'To Do',
+        type: 'Task',
+        created: new Date().toISOString(),
+        updated: new Date().toISOString(),
+      })),
+      updateIssue: vi.fn(async () => {}),
+      getIssue: vi.fn(async () => ({
+        id: '10001',
+        key: 'TEST-1',
+        url: 'https://test.atlassian.net/browse/TEST-1',
+        title: 'Test',
+        description: '',
+        status: 'To Do',
+        type: 'Task',
+        created: new Date().toISOString(),
+        updated: new Date().toISOString(),
+      })),
+      findIssues: vi.fn(async () => []),
+      createSubtask: vi.fn(async () => ({
+        id: '10002',
+        key: 'TEST-2',
+        url: 'https://test.atlassian.net/browse/TEST-2',
+        title: 'Subtask',
+        description: '',
+        status: 'To Do',
+        type: 'Sub-task',
+        created: new Date().toISOString(),
+        updated: new Date().toISOString(),
+      })),
+      linkIssues: vi.fn(async () => {}),
+      transitionIssue: vi.fn(async () => {}),
+      getTransitions: vi.fn(async () => []),
+      addComment: vi.fn(async () => {}),
+    };
+
+    // Register the mock tracker
+    registerTracker('test-sync', async () => mockTracker);
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  function makeSyncConfig(overrides: Partial<RuntimeConfig['tracker']> = {}): RuntimeConfig {
+    return makeConfig({
+      tracker: {
+        type: 'test-sync',
+        configPath: './tracker.json',
+        autoCreate: true,
+        autoTransition: true,
+        autoComment: true,
+        ...overrides,
+      },
+    });
+  }
+
+  function makeSyncExecutor(extraFiles: Record<string, string> = {}): Executor & { _fs: Map<string, string> } {
+    return makeMockExecutor({
+      './tracker.json': JSON.stringify({ ...trackerConfigJson, type: 'test-sync' }),
+      './state/tasks.jsonl': '',
+      ...extraFiles,
+    }) as Executor & { _fs: Map<string, string> };
+  }
+
+  it('skips when all auto flags are false', async () => {
+    const config = makeSyncConfig({
+      autoCreate: false,
+      autoTransition: false,
+      autoComment: false,
+    });
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done' });
+
+    await syncTaskToTracker(context, task, true);
+
+    // readFile should not have been called for tracker config
+    expect(executor.readFile).not.toHaveBeenCalledWith('./tracker.json');
+  });
+
+  it('skips when tracker credentials are missing', async () => {
+    delete process.env.RALPH_TEST_SYNC_TOKEN;
+    delete process.env.TEST_SYNC_TOKEN;
+    const config = makeSyncConfig();
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done' });
+
+    await syncTaskToTracker(context, task, true);
+
+    expect(mockTracker.createIssue).not.toHaveBeenCalled();
+    expect(mockTracker.transitionIssue).not.toHaveBeenCalled();
+  });
+
+  it('creates issue when autoCreate is true and task has no externalId', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    const config = makeSyncConfig({ autoCreate: true });
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done' });
+
+    await syncTaskToTracker(context, task, true);
+
+    expect(mockTracker.createIssue).toHaveBeenCalledWith(task);
+  });
+
+  it('records link operation after creating issue', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    const config = makeSyncConfig({ autoCreate: true });
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done' });
+
+    await syncTaskToTracker(context, task, true);
+
+    const content = executor._fs.get('./state/tasks.jsonl')!;
+    const lines = content.trim().split('\n').filter(l => l.trim());
+    expect(lines.length).toBeGreaterThan(0);
+    const linkOp = JSON.parse(lines[lines.length - 1]);
+    expect(linkOp.op).toBe('link');
+    expect(linkOp.id).toBe('T-1');
+    expect(linkOp.externalId).toBe('TEST-T-1');
+  });
+
+  it('transitions issue when autoTransition is true and task has externalId', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    const config = makeSyncConfig({ autoTransition: true });
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done', externalId: 'TEST-1' });
+
+    await syncTaskToTracker(context, task, true);
+
+    expect(mockTracker.transitionIssue).toHaveBeenCalledWith('TEST-1', 'Done');
+  });
+
+  it('adds success comment when autoComment is true', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    const config = makeSyncConfig({ autoComment: true });
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done', externalId: 'TEST-1' });
+
+    await syncTaskToTracker(context, task, true);
+
+    expect(mockTracker.addComment).toHaveBeenCalledWith(
+      'TEST-1',
+      'Task completed successfully by Ralph.'
+    );
+  });
+
+  it('adds failure comment when task did not succeed', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    const config = makeSyncConfig({ autoComment: true });
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'blocked', externalId: 'TEST-1' });
+
+    await syncTaskToTracker(context, task, false);
+
+    expect(mockTracker.addComment).toHaveBeenCalledWith(
+      'TEST-1',
+      'Task marked as blocked by Ralph.'
+    );
+  });
+
+  it('does not create issue when autoCreate is false even without externalId', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    const config = makeSyncConfig({ autoCreate: false, autoTransition: true });
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done' });
+
+    await syncTaskToTracker(context, task, true);
+
+    expect(mockTracker.createIssue).not.toHaveBeenCalled();
+    // No transition either since there's no externalId
+    expect(mockTracker.transitionIssue).not.toHaveBeenCalled();
+  });
+
+  it('does not transition when autoTransition is false', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    const config = makeSyncConfig({ autoTransition: false, autoComment: true });
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done', externalId: 'TEST-1' });
+
+    await syncTaskToTracker(context, task, true);
+
+    expect(mockTracker.transitionIssue).not.toHaveBeenCalled();
+    // But comment should still be added
+    expect(mockTracker.addComment).toHaveBeenCalled();
+  });
+
+  it('does not comment when autoComment is false', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    const config = makeSyncConfig({ autoComment: false, autoTransition: true });
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done', externalId: 'TEST-1' });
+
+    await syncTaskToTracker(context, task, true);
+
+    expect(mockTracker.addComment).not.toHaveBeenCalled();
+    // But transition should still happen
+    expect(mockTracker.transitionIssue).toHaveBeenCalled();
+  });
+
+  it('handles tracker error gracefully without crashing', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    (mockTracker.createIssue as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('API rate limit exceeded')
+    );
+    const config = makeSyncConfig({ autoCreate: true });
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done' });
+
+    // Should not throw
+    await expect(syncTaskToTracker(context, task, true)).resolves.toBeUndefined();
+  });
+
+  it('logs error message on tracker failure', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    (mockTracker.createIssue as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('Connection refused')
+    );
+    const config = makeSyncConfig({ autoCreate: true });
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done' });
+
+    await syncTaskToTracker(context, task, true);
+
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('Tracker sync failed for T-1: Connection refused')
+    );
+  });
+
+  it('handles missing tracker config file gracefully', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': '',
+      // No ./tracker.json file
+    });
+    const config = makeSyncConfig();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done' });
+
+    await expect(syncTaskToTracker(context, task, true)).resolves.toBeUndefined();
+  });
+
+  it('does not transition when status has no mapping', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    // Use a tracker config without a statusMap entry for 'discovered'
+    const sparseConfig = { ...trackerConfigJson, type: 'test-sync', statusMap: {} };
+    const executor = makeMockExecutor({
+      './tracker.json': JSON.stringify(sparseConfig),
+      './state/tasks.jsonl': '',
+    });
+    const config = makeSyncConfig({ autoTransition: true, autoComment: false });
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'discovered', externalId: 'TEST-1' });
+
+    await syncTaskToTracker(context, task, true);
+
+    expect(mockTracker.transitionIssue).not.toHaveBeenCalled();
+  });
+
+  it('performs both transition and comment for linked task', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    const config = makeSyncConfig({ autoTransition: true, autoComment: true });
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done', externalId: 'EXT-99' });
+
+    await syncTaskToTracker(context, task, true);
+
+    expect(mockTracker.transitionIssue).toHaveBeenCalledWith('EXT-99', 'Done');
+    expect(mockTracker.addComment).toHaveBeenCalledWith(
+      'EXT-99',
+      'Task completed successfully by Ralph.'
+    );
+  });
+
+  it('handles non-Error thrown objects gracefully', async () => {
+    process.env.TEST_SYNC_TOKEN = 'tok';
+    (mockTracker.createIssue as ReturnType<typeof vi.fn>).mockRejectedValue('string error');
+    const config = makeSyncConfig({ autoCreate: true });
+    const executor = makeSyncExecutor();
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1', status: 'done' });
+
+    await expect(syncTaskToTracker(context, task, true)).resolves.toBeUndefined();
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('Unknown error')
+    );
+  });
+});
+
