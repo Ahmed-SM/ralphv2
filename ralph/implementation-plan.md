@@ -89,6 +89,7 @@ Ralph v1 MVP is now functional with:
 - Learning system with pattern detection
 - Sandboxed execution environment
 - Unit test suite (367 tests across 15 core modules)
+- Property-based test suite (79 tests across 4 parsing/state modules)
 
 ### Test Coverage (Phase 7) ✅ COMPLETE
 - [x] parse-markdown.ts — 12 tests (parsing, metadata extraction, task list flattening)
@@ -119,13 +120,18 @@ Ralph v1 MVP is now functional with:
 - [x] update-status.ts — 21 tests (status updates, transition matching, push/pull/auto sync, batch sync, operation generation)
 - [x] sync.ts — 15 tests (syncToTracker push, syncFromTracker pull, bidirectional sync, filtering, force updates, error recording)
 
+### Property-Based Tests (Phase 11) ✅ COMPLETE
+- [x] parse-markdown.ts — 14 property tests (arbitrary string resilience, heading extraction invariants, task checkbox round-trip, parentHeading consistency, flatten monotonicity, link extraction, nested children)
+- [x] extract-tasks.ts — 18 property tests (ID format/uniqueness, generateTaskId↔parseTaskId inverse, getNextTaskId correctness, status mapping, type inference, stats invariants, deduplication, epic detection, timestamp propagation)
+- [x] parse-commits.ts — 28 property tests (git log parsing resilience, SHA format, shortSha derivation, simple format parsing, task ID extraction/normalization/deduplication/case-insensitivity, custom prefixes, action inference, commit partitioning, branch detection, buildGitLogCommand)
+- [x] loop.ts (deriveTaskState, isBlocked) — 19 property tests (event sourcing create/update/link/relate, overwrite semantics, silent ignore of missing tasks, relationship accumulation, replay determinism, last-write-wins ordering, blocking logic with done/cancelled/active/missing blockers, mixed blocker scenarios)
+
 Next steps for production readiness:
 1. Add LLM integration for intelligent task execution
 2. Live testing with Jira credentials
 3. Live testing with actual git repository
 4. Add more tracker adapters (GitHub Issues, Linear)
 5. Integration tests for full discovery and git-watcher pipelines
-6. Property-based tests for edge cases in parsing modules
 
 ## Dependencies
 
