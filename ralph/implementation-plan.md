@@ -88,7 +88,7 @@ Ralph v1 MVP is now functional with:
 - Git activity watching
 - Learning system with pattern detection
 - Sandboxed execution environment
-- Unit test suite (413 tests across 16 core modules)
+- Unit test suite (473 tests across 17 core modules)
 - Property-based test suite (79 tests across 4 parsing/state modules)
 - Integration test suite (56 tests across 3 pipelines, including live git)
 
@@ -143,11 +143,23 @@ Ralph v1 MVP is now functional with:
 - [x] Live branch parsing — 2 tests (current branch, branch listing from real git)
 - [x] Live filterNewCommits — 2 tests (progress event filtering with real SHAs, empty progress passthrough)
 
+### GitHub Issues Adapter (Phase 15) ✅ COMPLETE
+- [x] Implement GitHubIssuesAdapter → [integrations/github-issues/adapter.ts](./integrations/github-issues/adapter.ts)
+- [x] Issue CRUD (create, get, update, find with filters)
+- [x] Milestone creation for epics
+- [x] Subtask creation via parent references
+- [x] Issue linking via comments
+- [x] State transitions (open/closed with state_reason)
+- [x] Pull request filtering from issue queries
+- [x] Dry-run mode support
+- [x] Register adapter in tracker factory
+- [x] Unit tests — 60 tests (constructor, auth, healthCheck, CRUD, transitions, subtasks, linking, comments, type inference, error handling, registration)
+
 Next steps for production readiness:
 1. Add LLM integration for intelligent task execution
 2. Live testing with Jira credentials
 3. Live testing with actual git repository
-4. Add more tracker adapters (GitHub Issues, Linear)
+4. Add Linear tracker adapter
 
 ## Dependencies
 

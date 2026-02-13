@@ -2,21 +2,26 @@
 
 > Instructions for integrating Ralph with GitHub Issues.
 
-## Status: Planned
+## Status: Implemented
 
-This integration is planned for Phase 3+.
+The GitHub Issues adapter implements the full Tracker interface.
 
 ## Overview
 
 GitHub Issues provides a lightweight alternative to Jira, especially for open-source projects or teams already using GitHub.
 
-## Planned Features
+## Implemented Features
 
 - Create issues from tasks
 - Create milestones from epics
 - Use labels for task types
-- Track PRs linked to issues
-- Auto-close issues on PR merge
+- Subtask creation via parent references
+- Issue linking via comments
+- State transitions (open/closed with state_reason)
+- Issue search with filtering (state, labels, assignee, since)
+- Pull request filtering (excluded from issue queries)
+- Health check via /user endpoint
+- Dry-run mode support
 
 ## Mapping
 
@@ -24,43 +29,70 @@ GitHub Issues provides a lightweight alternative to Jira, especially for open-so
 |-------|--------|
 | epic | Milestone |
 | feature | Issue + `enhancement` label |
-| task | Issue |
-| subtask | Checkbox in issue body |
+| task | Issue + `task` label |
+| subtask | Issue with parent reference in body |
 | bug | Issue + `bug` label |
 
-## API
+## Status Mapping
 
-```bash
-# Auth
-export RALPH_GITHUB_TOKEN=ghp_...
+| Ralph Status | GitHub State |
+|--------------|-------------|
+| discovered | open |
+| pending | open |
+| in_progress | open |
+| blocked | open |
+| review | open |
+| done | closed (completed) |
+| cancelled | closed (not_planned) |
 
-# Create issue
-gh api repos/{owner}/{repo}/issues -f title="..." -f body="..."
+## Configuration
 
-# Add label
-gh api repos/{owner}/{repo}/issues/{number}/labels -f labels[]="bug"
-
-# Close issue
-gh api repos/{owner}/{repo}/issues/{number} -f state="closed"
-```
-
-## Configuration (Planned)
+The `project` field uses `owner/repo` format:
 
 ```json
 {
   "type": "github-issues",
-  "owner": "your-org",
-  "repo": "your-repo",
-  "labels": {
+  "project": "your-org/your-repo",
+  "issueTypeMap": {
     "epic": "epic",
     "feature": "enhancement",
-    "bug": "bug",
-    "task": "task"
+    "task": "task",
+    "subtask": "task",
+    "bug": "bug"
   },
-  "autoClose": true,
-  "linkPRs": true
+  "statusMap": {
+    "discovered": "Backlog",
+    "pending": "Open",
+    "in_progress": "Open",
+    "blocked": "Open",
+    "review": "Open",
+    "done": "Closed",
+    "cancelled": "Closed"
+  },
+  "autoCreate": true,
+  "autoTransition": true,
+  "autoComment": false
 }
 ```
+
+## Auth
+
+```bash
+export RALPH_GITHUB_TOKEN=ghp_...
+```
+
+Auth config:
+```json
+{
+  "type": "token",
+  "token": "ghp_..."
+}
+```
+
+## Files
+
+- [adapter.ts](./adapter.ts) — Tracker interface implementation (GitHubIssuesAdapter)
+- [adapter.test.ts](./adapter.test.ts) — 60 unit tests
 
 ---
 
