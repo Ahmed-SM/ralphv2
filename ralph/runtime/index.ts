@@ -13,6 +13,7 @@ import { runLoop } from './loop.js';
 export { runLoop, type LoopContext, type LoopResult, pickNextTask, executeTaskLoop, executeIteration, updateTaskStatus, recordTaskCompletion, syncTaskToTracker, getTrackerAuth, readJsonl, appendJsonl } from './loop.js';
 export { createExecutor, Executor, GitOperations } from './executor.js';
 export { createSandbox, Sandbox, printSandboxStatus, type FileChange } from './sandbox.js';
+export { executeLLMIteration, executeToolCall, buildSystemPrompt, buildIterationPrompt, interpretResponse, loadTaskContext, createLLMProvider, AGENT_TOOLS } from './llm.js';
 
 const DEFAULT_CONFIG_PATH = './ralph.config.json';
 

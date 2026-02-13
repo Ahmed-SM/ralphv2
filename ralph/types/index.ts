@@ -331,6 +331,46 @@ export interface Logger {
 }
 
 // =============================================================================
+// LLM TYPES
+// =============================================================================
+
+export interface LLMMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface LLMToolCall {
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface LLMResponse {
+  content: string;
+  toolCalls: LLMToolCall[];
+  finishReason: 'stop' | 'tool_calls' | 'length' | 'error';
+}
+
+export interface LLMTool {
+  name: string;
+  description: string;
+  parameters: JSONSchema;
+}
+
+export interface LLMProvider {
+  chat(messages: LLMMessage[], tools?: LLMTool[]): Promise<LLMResponse>;
+}
+
+export interface LLMConfig {
+  enabled: boolean;
+  provider: 'anthropic' | 'openai' | 'custom';
+  model: string;
+  apiKey?: string;
+  baseUrl?: string;
+  maxTokens: number;
+  temperature: number;
+}
+
+// =============================================================================
 // CONFIG TYPES
 // =============================================================================
 
@@ -343,6 +383,7 @@ export interface RuntimeConfig {
   git: GitConfig;
   learning: LearningConfig;
   notifications: NotificationConfig;
+  llm?: LLMConfig;
 }
 
 export interface SandboxConfig {

@@ -216,11 +216,39 @@ Ralph v1 MVP is now functional with:
 - [x] syncTaskToTracker — 16 tests (skip when flags disabled, skip on missing creds, create issue, record link op, transition issue, success comment, failure comment, no-create without flag, no-transition without flag, no-comment without flag, error resilience, error logging, missing config file, unmapped status, combined transition+comment, non-Error thrown objects)
 - [x] Total: 22 new tests (836 total across 27 test files)
 
+### LLM Integration (Phase 20) ✅ COMPLETE
+- [x] Added LLM types to types/index.ts (LLMProvider, LLMMessage, LLMResponse, LLMToolCall, LLMTool, LLMConfig)
+- [x] Created runtime/llm.ts — LLM provider abstraction, prompt builder, tool definitions, action executor, response interpreter
+- [x] AGENT_TOOLS — 5 sandbox tools (read_file, write_file, run_bash, task_complete, task_blocked)
+- [x] buildSystemPrompt — System prompt establishing Ralph agent identity and rules
+- [x] buildIterationPrompt — Context-aware prompt from task, spec, agent instructions, previous results
+- [x] executeToolCall — Executes LLM tool calls against sandbox (read/write/bash/complete/blocked)
+- [x] interpretResponse — Maps LLM response + tool calls to IterationResult (complete/blocked/failed/continue)
+- [x] executeLLMIteration — Full iteration pipeline: prompt → LLM → tool execution → result interpretation
+- [x] createLLMProvider — Factory with injectable provider (no vendor lock-in)
+- [x] loadTaskContext — Loads spec content and agent instructions for a task
+- [x] Updated executeIteration in loop.ts — Uses LLM when context.llmProvider is set, falls back to heuristic
+- [x] Added llmProvider to LoopContext interface
+- [x] Added optional llm config to RuntimeConfig
+- [x] Exported LLM functions from runtime/index.ts
+- [x] Unit tests — 72 tests → [runtime/llm.test.ts](./runtime/llm.test.ts)
+  - AGENT_TOOLS — 7 tests (tool count, individual tool definitions, descriptions)
+  - buildSystemPrompt — 5 tests (non-empty, identity, sandbox, completion/blocked mentions)
+  - buildIterationPrompt — 10 tests (task ID/title, iteration, status/type, description, spec, agent instructions, previous result, tags, omission of optional sections, action instruction)
+  - executeToolCall — 13 tests (read success/error/duration, write success/error, bash success/failure/empty/error, task_complete/empty, task_blocked/missing, unknown tool)
+  - interpretResponse — 11 tests (complete, blocked, error, stop-no-actions, length, continue-with-tools, priority-complete, priority-blocked, default-reason, default-error, missing-artifacts)
+  - executeLLMIteration — 8 tests (message construction, spec inclusion, tool execution, continue, blocked, conversation history, empty actions, write/bash execution)
+  - createLLMProvider — 5 tests (undefined config, disabled, no factory, with factory, disabled-no-factory-call)
+  - loadTaskContext — 8 tests (spec loading, missing spec, no spec field, agent instructions by type, missing agent file, epic type, both spec+agent)
+  - executeIteration integration — 3 tests (LLM path, heuristic fallback, LLM error handling)
+- [x] Total: 72 new tests (908 total across 28 test files)
+
 Next steps for production readiness:
-1. Add LLM integration for intelligent task execution
-2. Live testing with Jira credentials
-3. Live testing with actual git repository
-4. Live testing with Linear API key
+1. ~~Add LLM integration for intelligent task execution~~ ✅ Done
+2. Implement concrete LLM API client (Anthropic/OpenAI HTTP adapter)
+3. Live testing with Jira credentials
+4. Live testing with actual git repository
+5. Live testing with Linear API key
 
 ## Dependencies
 

@@ -18,6 +18,7 @@ import type {
   IterationResult,
   ProgressEvent,
   LearningEvent,
+  LLMProvider,
 } from '../types/index.js';
 import { createExecutor, Executor, GitOperations } from './executor.js';
 import type {
@@ -25,12 +26,14 @@ import type {
   AuthConfig,
 } from '../skills/normalize/tracker-interface.js';
 import { createTracker } from '../skills/normalize/tracker-interface.js';
+import { executeLLMIteration, loadTaskContext } from './llm.js';
 
 export interface LoopContext {
   config: RuntimeConfig;
   executor: Executor;
   git: GitOperations;
   workDir: string;
+  llmProvider?: LLMProvider;
 }
 
 export interface LoopResult {
@@ -304,22 +307,44 @@ export async function executeTaskLoop(
 /**
  * Execute a single iteration
  *
- * This is where the actual agent work happens.
- * TODO: Integrate with LLM for intelligent execution
+ * When an LLM provider is available (context.llmProvider), this delegates
+ * to the LLM pipeline which:
+ *   1. Loads task spec and agent instructions
+ *   2. Builds a prompt
+ *   3. Calls the LLM with sandbox tools
+ *   4. Executes tool calls and interprets the result
+ *
+ * When no LLM provider is configured, falls back to the heuristic
+ * that checks whether the task's spec file already exists.
  */
 export async function executeIteration(
   context: LoopContext,
   task: Task,
   iteration: number
 ): Promise<IterationResult> {
-  // For now, return a placeholder
-  // In full implementation, this would:
-  // 1. Load relevant agent instructions
-  // 2. Read task spec
-  // 3. Execute agent logic
-  // 4. Return result
+  // LLM-powered execution path
+  if (context.llmProvider) {
+    try {
+      const { specContent, agentInstructions } = await loadTaskContext(
+        context.executor,
+        task,
+      );
+      const { result } = await executeLLMIteration(
+        context.llmProvider,
+        context.executor,
+        task,
+        iteration,
+        { specContent, agentInstructions },
+      );
+      return result;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown LLM error';
+      console.log(`  LLM iteration failed: ${msg}`);
+      return { status: 'failed', error: msg };
+    }
+  }
 
-  // Placeholder: Check if task has spec and spec file exists
+  // Fallback: heuristic execution (no LLM configured)
   if (task.spec) {
     try {
       const specContent = await context.executor.readFile(task.spec);
@@ -334,7 +359,6 @@ export async function executeIteration(
     }
   }
 
-  // For discovered tasks without specs, mark as needing work
   if (task.status === 'discovered') {
     return {
       status: 'continue',
