@@ -27,6 +27,9 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const configPath = args.find(a => a.startsWith('--config='))?.split('=')[1]
     || DEFAULT_CONFIG_PATH;
+  const dryRun = args.includes('--dry-run');
+  const taskFlag = args.find(a => a.startsWith('--task='));
+  const taskFilter = taskFlag?.split('=')[1];
 
   console.log('╔═══════════════════════════════════════════════════════════╗');
   console.log('║                         RALPH                              ║');
@@ -38,9 +41,18 @@ async function main(): Promise<void> {
     const workDir = resolve(process.cwd());
     console.log(`Working directory: ${workDir}`);
     console.log(`Config: ${configPath}`);
+    if (dryRun) console.log('Mode: DRY RUN (no git commits, no tracker sync)');
+    if (taskFilter) console.log(`Task filter: ${taskFilter}`);
     console.log();
 
     const config = await loadConfig(resolve(workDir, configPath));
+
+    // Apply CLI overrides to loop config
+    if (dryRun) config.loop.dryRun = true;
+    if (taskFilter) {
+      config.loop.taskFilter = taskFilter;
+      config.loop.maxTasksPerRun = 1;
+    }
 
     const result = await runLoop(config, workDir);
 

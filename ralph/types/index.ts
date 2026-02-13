@@ -265,6 +265,8 @@ export interface LoopConfig {
   maxTimePerRun: number;
   onFailure: 'stop' | 'continue' | 'retry';
   parallelism: number;
+  dryRun?: boolean;
+  taskFilter?: string;
 }
 
 export interface Iteration {

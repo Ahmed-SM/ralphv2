@@ -49,6 +49,8 @@ export interface LoopResult {
  */
 export async function runLoop(config: RuntimeConfig, workDir: string): Promise<LoopResult> {
   const startTime = Date.now();
+  const dryRun = config.loop.dryRun ?? false;
+  const taskFilter = config.loop.taskFilter;
 
   const executor = await createExecutor({ config, workDir });
   const git = new GitOperations(workDir);
@@ -72,8 +74,15 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     duration: 0,
   };
 
-  console.log('Ralph loop starting...');
+  if (dryRun) {
+    console.log('[DRY RUN] Ralph loop starting (no git commits, no tracker sync)...');
+  } else {
+    console.log('Ralph loop starting...');
+  }
   console.log(`Plan file: ${config.planFile}`);
+  if (taskFilter) {
+    console.log(`Task filter: ${taskFilter}`);
+  }
 
   // Main loop
   while (result.tasksProcessed < config.loop.maxTasksPerRun) {
@@ -91,7 +100,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     console.log(`Read implementation-plan.md (${plan.length} bytes)`);
 
     // 2. Pick next task
-    const task = await pickNextTask(context);
+    const task = await pickNextTask(context, taskFilter);
     if (!task) {
       console.log('No more tasks to process');
       break;
@@ -112,11 +121,13 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
       await updateTaskStatus(context, task.id, 'done');
       result.tasksCompleted++;
 
-      // Commit changes
-      if (config.git.autoCommit) {
+      // Commit changes (skip in dry-run mode)
+      if (config.git.autoCommit && !dryRun) {
         await executor.flush();
         await git.add('.');
         await git.commit(`${config.git.commitPrefix}${task.id}: ${task.title}`);
+      } else if (config.git.autoCommit && dryRun) {
+        console.log(`  [DRY RUN] Would commit: ${config.git.commitPrefix}${task.id}: ${task.title}`);
       }
     } else {
       // Rollback sandbox to discard failed task's pending changes
@@ -137,8 +148,12 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
       await recordTaskCompletion(context, task, taskResult);
     }
 
-    // 7. Sync to tracker (if configured)
-    await syncTaskToTracker(context, task, taskResult.success);
+    // 7. Sync to tracker (skip in dry-run mode)
+    if (!dryRun) {
+      await syncTaskToTracker(context, task, taskResult.success);
+    } else {
+      console.log(`  [DRY RUN] Would sync task ${task.id} to tracker`);
+    }
   }
 
   result.duration = Date.now() - startTime;
@@ -155,8 +170,10 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
 
 /**
  * Pick the next task to work on
+ *
+ * When taskFilter is provided, only that specific task ID is considered.
  */
-export async function pickNextTask(context: LoopContext): Promise<Task | null> {
+export async function pickNextTask(context: LoopContext, taskFilter?: string): Promise<Task | null> {
   const tasksLog = await readJsonl<TaskOperation>(
     context.executor,
     './state/tasks.jsonl'
@@ -164,6 +181,15 @@ export async function pickNextTask(context: LoopContext): Promise<Task | null> {
 
   // Derive current state
   const tasks = deriveTaskState(tasksLog);
+
+  // If a specific task is requested, return it directly (if eligible)
+  if (taskFilter) {
+    const target = tasks.get(taskFilter);
+    if (!target) return null;
+    // Allow picking even blocked tasks when explicitly requested
+    if (target.status === 'done' || target.status === 'cancelled') return null;
+    return target;
+  }
 
   // Filter candidates
   const candidates = Array.from(tasks.values())

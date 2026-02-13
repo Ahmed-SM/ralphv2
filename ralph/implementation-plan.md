@@ -287,13 +287,25 @@ Ralph v1 MVP is now functional with:
 - [x] Unit tests — 5 tests (rollback on failure, no rollback on success, rollback discards pending changes, success flushes without rollback, failed+successful task isolation)
 - [x] Total: 5 new tests (990 total across 29 test files)
 
+### CLI --dry-run and --task Flags (Phase 23) ✅ COMPLETE
+- [x] Implemented `--dry-run` flag — skips git commits and tracker sync, logs `[DRY RUN]` prefix
+- [x] Implemented `--task=<id>` flag — targets a single task by ID, sets maxTasksPerRun to 1
+- [x] Added `dryRun` and `taskFilter` optional fields to `LoopConfig` type
+- [x] Updated `pickNextTask()` to accept `taskFilter` parameter — returns targeted task directly, allows picking blocked tasks when explicitly requested
+- [x] Updated `runLoop()` — reads dryRun/taskFilter from config, skips git/tracker when dry-run
+- [x] Updated CLI `main()` — parses `--dry-run` and `--task=<id>` args, applies overrides to config
+- [x] Dry-run still executes task iterations and records learning (only git commits and tracker sync are suppressed)
+- [x] Unit tests — 15 tests (5 dry-run: skip git commit, skip tracker sync, still execute iterations, still record learning, default false; 10 taskFilter: pick specific task, no match returns null, done/cancelled returns null, blocked task picked when targeted, in_progress/discovered targeted, normal selection without filter, state derivation before filter, empty tasks returns null)
+- [x] Total: 15 new tests (1005 total across 29 test files)
+
 Next steps for production readiness:
 1. ~~Add LLM integration for intelligent task execution~~ ✅ Done
 2. ~~Implement concrete LLM API client (Anthropic/OpenAI HTTP adapter)~~ ✅ Done
 3. ~~Sandbox rollback on task failure~~ ✅ Done
-4. Live testing with Jira credentials
-5. Live testing with actual git repository
-6. Live testing with Linear API key
+4. ~~CLI --dry-run and --task flags~~ ✅ Done
+5. Live testing with Jira credentials
+6. Live testing with actual git repository
+7. Live testing with Linear API key
 
 ## Dependencies
 

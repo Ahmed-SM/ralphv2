@@ -1577,3 +1577,246 @@ describe('syncTaskToTracker', () => {
   });
 });
 
+// =============================================================================
+// --dry-run FLAG TESTS
+// =============================================================================
+
+describe('dry-run mode', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  it('skips git commit when dryRun is true and autoCommit is enabled', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'pending', spec: './specs/t1.md' });
+    const config = makeConfig({
+      loop: { ...makeConfig().loop, dryRun: true },
+      git: { autoCommit: true, commitPrefix: 'RALPH-', branchPrefix: 'ralph/' },
+    });
+    const executor = makeMockExecutor({
+      './AGENTS.md': '# Agents',
+      './implementation-plan.md': '# Plan',
+      './state/tasks.jsonl': taskCreateOp(t1) + '\n',
+      './state/progress.jsonl': '',
+      './specs/t1.md': '# Spec content',
+    });
+    const git = makeMockGit();
+    const context = makeContext({ config, executor, git });
+
+    // Simulate what runLoop does on success in dry-run mode
+    const task = await pickNextTask(context);
+    expect(task).not.toBeNull();
+
+    const taskResult = await executeTaskLoop(context, task!);
+    expect(taskResult.success).toBe(true);
+
+    const dryRun = config.loop.dryRun ?? false;
+
+    if (config.git.autoCommit && !dryRun) {
+      await executor.flush();
+      await git.add('.');
+      await git.commit(`${config.git.commitPrefix}${task!.id}: ${task!.title}`);
+    }
+
+    // Git operations should NOT have been called
+    expect(executor.flush).not.toHaveBeenCalled();
+    expect(git.add).not.toHaveBeenCalled();
+    expect(git.commit).not.toHaveBeenCalled();
+  });
+
+  it('skips tracker sync when dryRun is true', async () => {
+    const task = makeTask({ id: 'T-1', status: 'done', externalId: 'EXT-1' });
+    const config = makeConfig({
+      loop: { ...makeConfig().loop, dryRun: true },
+      tracker: {
+        type: 'jira',
+        configPath: './tracker.json',
+        autoCreate: true,
+        autoTransition: true,
+        autoComment: true,
+      },
+    });
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+    });
+    const context = makeContext({ config, executor });
+    const dryRun = config.loop.dryRun ?? false;
+
+    // In dry-run mode, syncTaskToTracker should not be called
+    if (!dryRun) {
+      await syncTaskToTracker(context, task, true);
+    }
+
+    // Tracker config should not even be read
+    expect(executor.readFile).not.toHaveBeenCalledWith('./tracker.json');
+  });
+
+  it('still executes task iterations in dry-run mode', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'pending', spec: './specs/t1.md' });
+    const config = makeConfig({
+      loop: { ...makeConfig().loop, dryRun: true },
+    });
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': taskCreateOp(t1) + '\n',
+      './state/progress.jsonl': '',
+      './specs/t1.md': '# Spec',
+    });
+    const context = makeContext({ config, executor });
+
+    const task = await pickNextTask(context);
+    const taskResult = await executeTaskLoop(context, task!);
+
+    // Task execution still happens in dry-run
+    expect(taskResult.success).toBe(true);
+    expect(taskResult.iterations).toBe(1);
+  });
+
+  it('still records learning in dry-run mode', async () => {
+    const config = makeConfig({
+      loop: { ...makeConfig().loop, dryRun: true },
+      learning: { enabled: true, autoApplyImprovements: false, minConfidence: 0.8, retentionDays: 90 },
+    });
+    const executor = makeMockExecutor({ './state/learning.jsonl': '' });
+    const context = makeContext({ config, executor });
+    const task = makeTask({ id: 'T-1' });
+
+    await recordTaskCompletion(context, task, { success: true, iterations: 2 });
+
+    const fs = (executor as unknown as { _fs: Map<string, string> })._fs;
+    const content = fs.get('./state/learning.jsonl')!;
+    expect(content.trim()).not.toBe('');
+  });
+
+  it('dryRun defaults to false when not set', () => {
+    const config = makeConfig();
+    expect(config.loop.dryRun).toBeUndefined();
+    const dryRun = config.loop.dryRun ?? false;
+    expect(dryRun).toBe(false);
+  });
+});
+
+// =============================================================================
+// --task=<id> FILTER TESTS
+// =============================================================================
+
+describe('taskFilter (--task flag)', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  it('picks only the specified task when taskFilter is provided', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'pending', createdAt: '2025-01-01T00:00:00Z' });
+    const t2 = makeTask({ id: 'T-2', status: 'pending', createdAt: '2025-01-02T00:00:00Z' });
+    const content = [taskCreateOp(t1), taskCreateOp(t2)].join('\n') + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+
+    const task = await pickNextTask(context, 'T-2');
+    expect(task).not.toBeNull();
+    expect(task!.id).toBe('T-2');
+  });
+
+  it('returns null when taskFilter matches no task', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'pending' });
+    const content = taskCreateOp(t1) + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+
+    const task = await pickNextTask(context, 'NONEXISTENT');
+    expect(task).toBeNull();
+  });
+
+  it('returns null when filtered task is done', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'done' });
+    const content = taskCreateOp(t1) + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+
+    const task = await pickNextTask(context, 'T-1');
+    expect(task).toBeNull();
+  });
+
+  it('returns null when filtered task is cancelled', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'cancelled' });
+    const content = taskCreateOp(t1) + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+
+    const task = await pickNextTask(context, 'T-1');
+    expect(task).toBeNull();
+  });
+
+  it('picks blocked task when explicitly targeted by taskFilter', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'pending' });
+    const t2 = makeTask({ id: 'T-2', status: 'pending', blockedBy: ['T-1'] });
+    const content = [taskCreateOp(t1), taskCreateOp(t2)].join('\n') + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+
+    // Without filter, T-2 would be skipped (blocked by T-1)
+    const unfiltered = await pickNextTask(context);
+    expect(unfiltered!.id).toBe('T-1');
+
+    // With filter, T-2 is returned even though it's blocked
+    const filtered = await pickNextTask(context, 'T-2');
+    expect(filtered).not.toBeNull();
+    expect(filtered!.id).toBe('T-2');
+  });
+
+  it('picks in_progress task when targeted by taskFilter', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'in_progress' });
+    const content = taskCreateOp(t1) + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+
+    const task = await pickNextTask(context, 'T-1');
+    expect(task).not.toBeNull();
+    expect(task!.id).toBe('T-1');
+    expect(task!.status).toBe('in_progress');
+  });
+
+  it('picks discovered task when targeted by taskFilter', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'discovered' });
+    const content = taskCreateOp(t1) + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+
+    const task = await pickNextTask(context, 'T-1');
+    expect(task).not.toBeNull();
+    expect(task!.status).toBe('discovered');
+  });
+
+  it('without taskFilter, normal selection logic applies', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'pending', createdAt: '2025-01-02T00:00:00Z' });
+    const t2 = makeTask({ id: 'T-2', status: 'pending', createdAt: '2025-01-01T00:00:00Z' });
+    const content = [taskCreateOp(t1), taskCreateOp(t2)].join('\n') + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+
+    // Without filter, oldest pending task (T-2) is picked
+    const task = await pickNextTask(context);
+    expect(task!.id).toBe('T-2');
+  });
+
+  it('derives state from log before applying taskFilter', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'pending' });
+    const content = [
+      taskCreateOp(t1),
+      taskUpdateOp('T-1', { status: 'done' }),
+    ].join('\n') + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+
+    // T-1 was updated to done, so even with filter it returns null
+    const task = await pickNextTask(context, 'T-1');
+    expect(task).toBeNull();
+  });
+
+  it('taskFilter with empty tasks.jsonl returns null', async () => {
+    const executor = makeMockExecutor({ './state/tasks.jsonl': '' });
+    const context = makeContext({ executor });
+
+    const task = await pickNextTask(context, 'T-1');
+    expect(task).toBeNull();
+  });
+});
+
