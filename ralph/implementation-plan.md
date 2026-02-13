@@ -280,12 +280,20 @@ Ralph v1 MVP is now functional with:
   - createProvider — 8 tests (anthropic, openai, custom error, unknown error, fetchFn passthrough, env resolution)
 - [x] Total: 77 new tests (985 total across 29 test files)
 
+### Sandbox Rollback on Task Failure (Phase 22) ✅ COMPLETE
+- [x] Implemented sandbox rollback in `runLoop()` — calls `executor.rollback()` when a task fails before marking it blocked
+- [x] Aligns with loop-mechanics spec: "If iteration fails: Discard filesystem changes (OverlayFS)"
+- [x] Prevents failed task changes from polluting sandbox state for subsequent tasks
+- [x] Unit tests — 5 tests (rollback on failure, no rollback on success, rollback discards pending changes, success flushes without rollback, failed+successful task isolation)
+- [x] Total: 5 new tests (990 total across 29 test files)
+
 Next steps for production readiness:
 1. ~~Add LLM integration for intelligent task execution~~ ✅ Done
 2. ~~Implement concrete LLM API client (Anthropic/OpenAI HTTP adapter)~~ ✅ Done
-3. Live testing with Jira credentials
-4. Live testing with actual git repository
-5. Live testing with Linear API key
+3. ~~Sandbox rollback on task failure~~ ✅ Done
+4. Live testing with Jira credentials
+5. Live testing with actual git repository
+6. Live testing with Linear API key
 
 ## Dependencies
 

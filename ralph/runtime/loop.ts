@@ -119,6 +119,10 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
         await git.commit(`${config.git.commitPrefix}${task.id}: ${task.title}`);
       }
     } else {
+      // Rollback sandbox to discard failed task's pending changes
+      executor.rollback();
+      console.log(`  Sandbox rolled back for failed task ${task.id}`);
+
       await updateTaskStatus(context, task.id, 'blocked', taskResult.reason);
       result.tasksFailed++;
 

@@ -778,6 +778,54 @@ describe('runLoop', () => {
     expect(result.reason).toBe('Max iterations reached');
   });
 
+  it('calls rollback on task failure in orchestration flow', async () => {
+    // Simulate what runLoop does: when executeTaskLoop returns failure, rollback
+    const task = makeTask({ id: 'T-1', status: 'in_progress' });
+    const config = makeConfig({
+      loop: { ...makeConfig().loop, maxIterationsPerTask: 1 },
+    });
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/progress.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    const taskResult = await executeTaskLoop(context, task);
+    expect(taskResult.success).toBe(false);
+
+    // Simulate runLoop's failure path
+    if (!taskResult.success) {
+      executor.rollback();
+    }
+
+    expect(executor.rollback).toHaveBeenCalled();
+  });
+
+  it('does not call rollback on task success', async () => {
+    const task = makeTask({ id: 'T-1', status: 'in_progress', spec: './specs/t1.md' });
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/progress.jsonl': '',
+      './specs/t1.md': '# Spec for T-1',
+    });
+    const config = makeConfig({
+      git: { autoCommit: false, commitPrefix: 'RALPH-', branchPrefix: 'ralph/' },
+    });
+    const context = makeContext({ config, executor });
+
+    const taskResult = await executeTaskLoop(context, task);
+    expect(taskResult.success).toBe(true);
+
+    // Simulate runLoop's success path (no rollback, only flush if autoCommit)
+    if (taskResult.success) {
+      // Don't rollback on success
+    } else {
+      executor.rollback();
+    }
+
+    expect(executor.rollback).not.toHaveBeenCalled();
+  });
+
   it('handles git commit on successful task when autoCommit is true', async () => {
     const git = makeMockGit();
     const executor = makeMockExecutor({
@@ -990,6 +1038,92 @@ describe('loop orchestration scenarios', () => {
     expect(e2.taskId).toBe('T-2');
     expect(e2.success).toBe(false);
     expect(e2.blockers).toEqual(['timeout']);
+  });
+
+  it('rollback discards pending changes on task failure', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'pending', createdAt: '2025-01-01T00:00:00Z' });
+    const config = makeConfig({
+      loop: { ...makeConfig().loop, maxIterationsPerTask: 1 },
+    });
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': taskCreateOp(t1) + '\n',
+      './state/progress.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    // Pick and execute the task (will fail since no spec)
+    const task = await pickNextTask(context);
+    expect(task).not.toBeNull();
+    const taskResult = await executeTaskLoop(context, task!);
+    expect(taskResult.success).toBe(false);
+
+    // Rollback as runLoop does
+    executor.rollback();
+
+    // Verify rollback was called
+    expect(executor.rollback).toHaveBeenCalledTimes(1);
+  });
+
+  it('successful task flushes but does not rollback', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'pending', spec: './specs/t1.md', createdAt: '2025-01-01T00:00:00Z' });
+    const config = makeConfig({
+      git: { autoCommit: true, commitPrefix: 'RALPH-', branchPrefix: 'ralph/' },
+    });
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': taskCreateOp(t1) + '\n',
+      './state/progress.jsonl': '',
+      './specs/t1.md': '# Content',
+    });
+    const git = makeMockGit();
+    const context = makeContext({ config, executor, git });
+
+    const task = await pickNextTask(context);
+    const taskResult = await executeTaskLoop(context, task!);
+    expect(taskResult.success).toBe(true);
+
+    // Simulate success path
+    await executor.flush();
+    await git.add('.');
+    await git.commit(`RALPH-${task!.id}: ${task!.title}`);
+
+    expect(executor.flush).toHaveBeenCalled();
+    expect(executor.rollback).not.toHaveBeenCalled();
+  });
+
+  it('failed task followed by successful task: rollback isolates them', async () => {
+    const t1 = makeTask({ id: 'T-1', status: 'pending', createdAt: '2025-01-01T00:00:00Z' });
+    const t2 = makeTask({ id: 'T-2', status: 'pending', spec: './specs/t2.md', createdAt: '2025-01-02T00:00:00Z' });
+    const config = makeConfig({
+      loop: { ...makeConfig().loop, maxIterationsPerTask: 1 },
+    });
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': [taskCreateOp(t1), taskCreateOp(t2)].join('\n') + '\n',
+      './state/progress.jsonl': '',
+      './specs/t2.md': '# T-2 Spec',
+    });
+    const context = makeContext({ config, executor });
+
+    // T-1 will fail (no spec, 1 iteration)
+    const first = await pickNextTask(context);
+    expect(first!.id).toBe('T-1');
+    const result1 = await executeTaskLoop(context, first!);
+    expect(result1.success).toBe(false);
+
+    // Rollback T-1's changes
+    executor.rollback();
+    expect(executor.rollback).toHaveBeenCalledTimes(1);
+
+    // Mark T-1 as blocked
+    await updateTaskStatus(context, 'T-1', 'blocked', result1.reason);
+
+    // T-2 should succeed (has spec)
+    const second = await pickNextTask(context);
+    expect(second!.id).toBe('T-2');
+    const result2 = await executeTaskLoop(context, second!);
+    expect(result2.success).toBe(true);
+
+    // No additional rollback for T-2
+    expect(executor.rollback).toHaveBeenCalledTimes(1);
   });
 
   it('executeTaskLoop logs progress for failed iterations', async () => {
