@@ -445,8 +445,9 @@ export async function executeLLMIteration(
  * Create an LLM provider from configuration.
  *
  * Returns null if LLM is not enabled or not configured.
- * The actual API client implementation is injected to keep this module
- * testable without real HTTP calls.
+ * Pass a factory for testing/custom providers.
+ * For production use, import `createProvider` from `./llm-providers.js`
+ * and pass it as the factory.
  */
 export function createLLMProvider(
   config: LLMConfig | undefined,
@@ -460,8 +461,25 @@ export function createLLMProvider(
     return factory(config);
   }
 
-  // Default: return null (requires explicit factory for actual API calls)
+  // No factory provided and no default — return null
   return null;
+}
+
+/**
+ * Create an LLM provider using the built-in concrete providers (Anthropic/OpenAI).
+ *
+ * This is the convenience function for production use.
+ * Returns null if LLM is not enabled or not configured.
+ */
+export async function createDefaultLLMProvider(
+  config: LLMConfig | undefined,
+): Promise<LLMProvider | null> {
+  if (!config || !config.enabled) {
+    return null;
+  }
+
+  const { createProvider } = await import('./llm-providers.js');
+  return createProvider(config);
 }
 
 /**

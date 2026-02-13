@@ -26,7 +26,7 @@ import type {
   AuthConfig,
 } from '../skills/normalize/tracker-interface.js';
 import { createTracker } from '../skills/normalize/tracker-interface.js';
-import { executeLLMIteration, loadTaskContext } from './llm.js';
+import { executeLLMIteration, loadTaskContext, createDefaultLLMProvider } from './llm.js';
 
 export interface LoopContext {
   config: RuntimeConfig;
@@ -53,11 +53,15 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
   const executor = await createExecutor({ config, workDir });
   const git = new GitOperations(workDir);
 
+  // Initialize LLM provider if configured
+  const llmProvider = await createDefaultLLMProvider(config.llm) ?? undefined;
+
   const context: LoopContext = {
     config,
     executor,
     git,
     workDir,
+    llmProvider,
   };
 
   const result: LoopResult = {

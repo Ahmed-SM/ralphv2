@@ -243,9 +243,46 @@ Ralph v1 MVP is now functional with:
   - executeIteration integration — 3 tests (LLM path, heuristic fallback, LLM error handling)
 - [x] Total: 72 new tests (908 total across 28 test files)
 
+### Concrete LLM API Clients (Phase 21) ✅ COMPLETE
+- [x] Implement AnthropicProvider → [runtime/llm-providers.ts](./runtime/llm-providers.ts)
+  - Anthropic Messages API integration (POST /v1/messages)
+  - System prompt extraction (top-level `system` field, not in messages)
+  - Tool conversion (`parameters` → `input_schema`)
+  - Response parsing (text + tool_use content blocks)
+  - Stop reason mapping (end_turn→stop, tool_use→tool_calls, max_tokens→length)
+  - Custom base URL support
+- [x] Implement OpenAIProvider → [runtime/llm-providers.ts](./runtime/llm-providers.ts)
+  - OpenAI Chat Completions API integration (POST /v1/chat/completions)
+  - Tool wrapping ({ type: 'function', function: { ... } })
+  - Response parsing (choices[0].message with tool_calls)
+  - JSON argument parsing with malformed-JSON resilience
+  - Finish reason mapping (content_filter→error)
+  - Custom base URL support
+- [x] Implement createProvider factory — routes by provider type, resolves API keys from env
+- [x] Implement resolveApiKey — ANTHROPIC_API_KEY / OPENAI_API_KEY env var fallback
+- [x] Wire createDefaultLLMProvider into llm.ts — async dynamic import for ESM compatibility
+- [x] Wire LLM provider into runLoop — auto-initializes from config.llm
+- [x] Native fetch (Node 20+) — zero external SDK dependencies
+- [x] Injectable fetchFn for testability — no real HTTP calls in tests
+- [x] Exported from runtime/index.ts
+- [x] Unit tests — 77 tests → [runtime/llm-providers.test.ts](./runtime/llm-providers.test.ts)
+  - formatAnthropicMessages — 5 tests (system extraction, concatenation, no system, order, empty)
+  - formatAnthropicTools — 3 tests (input_schema conversion, empty, field preservation)
+  - parseAnthropicResponse — 7 tests (text, tool_use, multiple tools, empty, max_tokens, missing input, text concatenation)
+  - mapAnthropicStopReason — 6 tests (end_turn, stop_sequence, tool_use, max_tokens, null, unknown)
+  - AnthropicProvider — 12 tests (no key, URLs, headers, body params, system prompt, tools, API error, full response, default model)
+  - formatOpenAIMessages — 3 tests (roles, content, empty)
+  - formatOpenAITools — 2 tests (function wrapping, empty)
+  - parseOpenAIResponse — 8 tests (text, tool_calls, multiple, empty choices, malformed JSON, null content, length, content_filter)
+  - mapOpenAIFinishReason — 6 tests (stop, tool_calls, length, content_filter, null, unknown)
+  - OpenAIProvider — 12 tests (no key, URLs, headers, body params, system in messages, tools, API error, full response, default model)
+  - resolveApiKey — 6 tests (explicit key, ANTHROPIC env, OPENAI env, custom provider, missing env, no mutation)
+  - createProvider — 8 tests (anthropic, openai, custom error, unknown error, fetchFn passthrough, env resolution)
+- [x] Total: 77 new tests (985 total across 29 test files)
+
 Next steps for production readiness:
 1. ~~Add LLM integration for intelligent task execution~~ ✅ Done
-2. Implement concrete LLM API client (Anthropic/OpenAI HTTP adapter)
+2. ~~Implement concrete LLM API client (Anthropic/OpenAI HTTP adapter)~~ ✅ Done
 3. Live testing with Jira credentials
 4. Live testing with actual git repository
 5. Live testing with Linear API key
