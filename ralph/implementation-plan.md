@@ -56,7 +56,7 @@ Build Ralph: a self-evolving agentic delivery system that reads specs, extracts 
 - [x] Implement status inferrer → [skills/track/infer-status.ts](./skills/track/infer-status.ts)
 - [x] Implement watcher CLI → [skills/track/cli.ts](./skills/track/cli.ts)
 - [x] Test: Git watcher runs successfully
-- [ ] Test with actual git repo and commits
+- [x] Test with actual git repo and commits → [skills/track/git-watcher-live.integration.test.ts](./skills/track/git-watcher-live.integration.test.ts)
 
 ### Phase 5: Learning Layer ✅ COMPLETE
 > Accumulate patterns, improve over time
@@ -90,7 +90,7 @@ Ralph v1 MVP is now functional with:
 - Sandboxed execution environment
 - Unit test suite (413 tests across 16 core modules)
 - Property-based test suite (79 tests across 4 parsing/state modules)
-- Integration test suite (34 tests across 2 pipelines)
+- Integration test suite (56 tests across 3 pipelines, including live git)
 
 ### Test Coverage (Phase 7) ✅ COMPLETE
 - [x] parse-markdown.ts — 12 tests (parsing, metadata extraction, task list flattening)
@@ -133,6 +133,15 @@ Ralph v1 MVP is now functional with:
 ### Integration Tests (Phase 13) ✅ COMPLETE
 - [x] Discovery pipeline — 16 integration tests (full discoverTasks end-to-end: markdown→parse→extract→resolve→output, RALPH ID assignment, status mapping, operation generation, citation resolution, dry-run/write modes, deduplication across runs, edge cases)
 - [x] Git watcher pipeline — 18 integration tests (full watchGitActivity end-to-end: git log→parse→link→infer→output, task reference extraction, commit filtering, status inference, anomaly detection, persistence, custom task prefix, orphan refs, edge cases)
+
+### Live Git Integration Tests (Phase 14) ✅ COMPLETE
+- [x] Live git log parsing — 5 tests (parseSimpleGitLog and parseGitLog against real repo output, SHA validation, date ordering, max-count, format cross-validation)
+- [x] Live git command building — 2 tests (buildGitLogCommand produces executable commands, since-date filtering against real history)
+- [x] Live task ref extraction — 2 tests (extractTaskRefs gracefully handles repos without task IDs, inferAction classifies real commit subjects)
+- [x] Live linking and inference — 3 tests (aggregateByTask with seeded tasks from real commits, inferStatuses with real data, detectAnomalies with real data)
+- [x] Live watchGitActivity pipeline — 6 tests (full pipeline against real repo, commit structure validation, maxCommits, pre-seeded tasks, dry-run safety, anomaly detection)
+- [x] Live branch parsing — 2 tests (current branch, branch listing from real git)
+- [x] Live filterNewCommits — 2 tests (progress event filtering with real SHAs, empty progress passthrough)
 
 Next steps for production readiness:
 1. Add LLM integration for intelligent task execution
@@ -180,7 +189,7 @@ Phase 4 complete: ✅
 - [x] Git activity linked to tasks
 - [x] Status inference from commits
 - [x] Anomaly detection
-- [ ] Live git test (pending git repo)
+- [x] Live git test (22 integration tests against real repo)
 
 Phase 5 complete: ✅
 - [x] Metrics recorded from execution
