@@ -88,7 +88,7 @@ Ralph v1 MVP is now functional with:
 - Git activity watching
 - Learning system with pattern detection
 - Sandboxed execution environment
-- Unit test suite (127 tests across 6 core modules)
+- Unit test suite (210 tests across 9 core modules)
 
 ### Test Coverage (Phase 7) ✅ COMPLETE
 - [x] parse-markdown.ts — 12 tests (parsing, metadata extraction, task list flattening)
@@ -97,6 +97,11 @@ Ralph v1 MVP is now functional with:
 - [x] link-commits.ts — 18 tests (commit-task linking, status inference, aggregation, orphan detection)
 - [x] infer-status.ts — 25 tests (status inference from git/PR/branch, anomaly detection, batch inference)
 - [x] loop.ts (deriveTaskState, isBlocked) — 17 tests (operation replay, task blocking logic)
+
+### Test Coverage (Phase 8) ✅ COMPLETE
+- [x] resolve-citations.ts — 20 tests (citation resolution, spec enrichment, path resolution, spec validation)
+- [x] detect-patterns.ts — 33 tests (estimation drift, task clustering, blocking chains, bug hotspots, iteration anomalies, velocity trends, bottlenecks, complexity signals, summary building)
+- [x] record-metrics.ts — 30 tests (task metric recording, aggregate computation, JSONL persistence, period formatting)
 
 ### Bug Fix
 - [x] Fixed `extractText` in parse-markdown.ts to handle `inlineCode` nodes (backtick text was silently dropped)
@@ -111,6 +116,7 @@ Next steps for production readiness:
 4. Add more tracker adapters (GitHub Issues, Linear)
 5. Integration tests for full discovery and git-watcher pipelines
 6. Property-based tests for edge cases in parsing modules
+7. Unit tests for remaining modules (sandbox.ts, executor.ts, normalize/)
 
 ## Dependencies
 
