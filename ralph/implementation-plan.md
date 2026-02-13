@@ -88,7 +88,7 @@ Ralph v1 MVP is now functional with:
 - Git activity watching
 - Learning system with pattern detection
 - Sandboxed execution environment
-- Unit test suite (543 tests across 18 core modules)
+- Unit test suite (620 tests across 19 core modules)
 - Property-based test suite (79 tests across 4 parsing/state modules)
 - Integration test suite (56 tests across 3 pipelines, including live git)
 
@@ -169,6 +169,27 @@ Ralph v1 MVP is now functional with:
 - [x] Token and OAuth authentication
 - [x] Register adapter in tracker factory
 - [x] Unit tests — 70 tests (constructor, auth headers, healthCheck, CRUD, transitions, subtasks, linking, comments, type inference, project mapping, error handling, dry-run, registration)
+
+### Jira Adapter Unit Tests (Phase 17) ✅ COMPLETE
+- [x] Unit tests — 77 tests → [integrations/jira/adapter.test.ts](./integrations/jira/adapter.test.ts)
+- [x] Constructor (name, baseUrl defaults)
+- [x] Auth headers (Basic email:token, Basic username:password, token, OAuth Bearer, Content-Type/Accept)
+- [x] healthCheck (healthy, unhealthy on API failure, unhealthy on network error, /myself endpoint)
+- [x] connect/disconnect (healthCheck delegation, no-op disconnect)
+- [x] createIssue (fields mapping, type mapping, labels, ADF description, parent for subtasks, dry-run)
+- [x] getIssue (fetch by key, field mapping, parent/subtasks, assignee, browse URL)
+- [x] updateIssue (title, description, labels, assignee, status via transitions, no-op for empty changes)
+- [x] findIssues (JQL construction, project/status/type/assignee/updatedSince/query filters, maxResults, AND combination)
+- [x] createSubtask (parent key, configured subtask type, project key)
+- [x] linkIssues (Blocks, Relates, Duplicate, Parent, is-blocked-by mapping, /issueLink endpoint)
+- [x] transitionIssue (match by name, match by target status case-insensitive, warn on no match, GET+POST flow)
+- [x] getTransitions (mapped transitions, correct endpoint)
+- [x] addComment (ADF format, text content, correct endpoint)
+- [x] ADF conversion (multi-paragraph, line break collapse, empty paragraph filtering, nested node extraction, null description)
+- [x] Dry-run mode (POST/PUT/link intercepted, GET allowed, console logging)
+- [x] API error handling (descriptive errors, response body in message, empty response body)
+- [x] Request URL construction (baseUrl + /rest/api/3 prefix)
+- [x] Registration (jira factory registered in tracker registry)
 
 Next steps for production readiness:
 1. Add LLM integration for intelligent task execution
