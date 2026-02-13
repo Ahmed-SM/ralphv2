@@ -88,8 +88,9 @@ Ralph v1 MVP is now functional with:
 - Git activity watching
 - Learning system with pattern detection
 - Sandboxed execution environment
-- Unit test suite (367 tests across 15 core modules)
+- Unit test suite (413 tests across 16 core modules)
 - Property-based test suite (79 tests across 4 parsing/state modules)
+- Integration test suite (34 tests across 2 pipelines)
 
 ### Test Coverage (Phase 7) ✅ COMPLETE
 - [x] parse-markdown.ts — 12 tests (parsing, metadata extraction, task list flattening)
@@ -126,12 +127,18 @@ Ralph v1 MVP is now functional with:
 - [x] parse-commits.ts — 28 property tests (git log parsing resilience, SHA format, shortSha derivation, simple format parsing, task ID extraction/normalization/deduplication/case-insensitivity, custom prefixes, action inference, commit partitioning, branch detection, buildGitLogCommand)
 - [x] loop.ts (deriveTaskState, isBlocked) — 19 property tests (event sourcing create/update/link/relate, overwrite semantics, silent ignore of missing tasks, relationship accumulation, replay determinism, last-write-wins ordering, blocking logic with done/cancelled/active/missing blockers, mixed blocker scenarios)
 
+### Unit Tests (Phase 12) ✅ COMPLETE
+- [x] improve-agents.ts — 46 tests (generateImprovements for all pattern types: estimation_drift, bug_hotspot, blocking_chain, iteration_anomaly, bottleneck, velocity_trend; metrics-based proposals; summary building; evidence/confidence propagation; saveProposals JSONL persistence; loadPendingProposals filtering; printProposals smoke tests)
+
+### Integration Tests (Phase 13) ✅ COMPLETE
+- [x] Discovery pipeline — 16 integration tests (full discoverTasks end-to-end: markdown→parse→extract→resolve→output, RALPH ID assignment, status mapping, operation generation, citation resolution, dry-run/write modes, deduplication across runs, edge cases)
+- [x] Git watcher pipeline — 18 integration tests (full watchGitActivity end-to-end: git log→parse→link→infer→output, task reference extraction, commit filtering, status inference, anomaly detection, persistence, custom task prefix, orphan refs, edge cases)
+
 Next steps for production readiness:
 1. Add LLM integration for intelligent task execution
 2. Live testing with Jira credentials
 3. Live testing with actual git repository
 4. Add more tracker adapters (GitHub Issues, Linear)
-5. Integration tests for full discovery and git-watcher pipelines
 
 ## Dependencies
 
