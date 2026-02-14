@@ -430,6 +430,22 @@ Ralph v1 MVP is now functional with:
   - coupling — 10 tests (co-change detection, few co-changes, same area, via tags, most coupled first, suggestion, evidence, no areas, no duplicate tags, confidence scaling)
 - [x] Total: 29 new tests (1270 total across 33 test files)
 
+### Git Watcher Loop Integration (Phase 30) ✅ COMPLETE
+- [x] Added `GitWatcherConfig` type to types/index.ts (enabled, taskPrefix, minConfidence, maxCommits, detectAnomalies)
+- [x] Added optional `gitWatcher` field to `RuntimeConfig`
+- [x] Implemented `runGitWatcher()` in runtime/loop.ts — bridges LoopContext to WatchContext, delegates to watchGitActivity
+- [x] Wired `runGitWatcher()` into `runLoop()` step 0 (before task selection) — detects external commits that update task status
+- [x] Task prefix derived from `git.commitPrefix` when `gitWatcher.taskPrefix` not set
+- [x] Dry-run mode propagated from `loop.dryRun`
+- [x] Anomaly hooks fired for git watcher anomalies (stale tasks, no activity, long running)
+- [x] Graceful error handling — git watcher failures are logged, never crash the loop
+- [x] Updated ralph.config.json with gitWatcher section
+- [x] Exported `runGitWatcher` from runtime/index.ts
+- [x] Unit tests — 20 tests → [runtime/git-watcher-loop.test.ts](./runtime/git-watcher-loop.test.ts)
+  - runGitWatcher — 17 tests (disabled config, enabled config, watchGitActivity delegation, taskPrefix from commitPrefix, dryRun passthrough, error resilience, non-Error handling, bash delegation, readFile/writeFile delegation, default config values, stderr+stdout handling, execCommand throws on no stdout, status inference from commits, summary logging, anomaly hook firing, detectAnomalies=false, maxCommits)
+  - GitWatcherConfig — 3 tests (optional on RuntimeConfig, all fields, required-only)
+- [x] Total: 20 new tests (1290 total across 34 test files)
+
 Next steps for production readiness:
 1. ~~Add LLM integration for intelligent task execution~~ ✅ Done
 2. ~~Implement concrete LLM API client (Anthropic/OpenAI HTTP adapter)~~ ✅ Done
@@ -439,9 +455,10 @@ Next steps for production readiness:
 6. ~~CLI entry point refactor (proper bin entry)~~ ✅ Done
 7. ~~Loop hooks / observability~~ ✅ Done
 8. ~~Task schema validation~~ ✅ Done
-9. Live testing with Jira credentials
-10. Live testing with actual git repository
-11. Live testing with Linear API key
+9. ~~Git watcher integration in main loop~~ ✅ Done
+10. Live testing with Jira credentials
+11. Live testing with actual git repository
+12. Live testing with Linear API key
 
 ## Dependencies
 

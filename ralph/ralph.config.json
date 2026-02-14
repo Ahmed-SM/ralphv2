@@ -39,6 +39,14 @@
     "branchPrefix": "ralph/"
   },
 
+  "gitWatcher": {
+    "enabled": true,
+    "taskPrefix": "RALPH",
+    "minConfidence": 0.7,
+    "maxCommits": 100,
+    "detectAnomalies": true
+  },
+
   "learning": {
     "enabled": true,
     "autoApplyImprovements": false,

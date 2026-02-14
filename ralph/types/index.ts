@@ -409,6 +409,7 @@ export interface RuntimeConfig {
   sandbox: SandboxConfig;
   tracker: TrackerRuntimeConfig;
   git: GitConfig;
+  gitWatcher?: GitWatcherConfig;
   learning: LearningConfig;
   notifications: NotificationConfig;
   llm?: LLMConfig;
@@ -438,6 +439,18 @@ export interface GitConfig {
   autoCommit: boolean;
   commitPrefix: string;
   branchPrefix: string;
+}
+
+export interface GitWatcherConfig {
+  enabled: boolean;
+  /** Task ID prefix for commit parsing (default: "RALPH") */
+  taskPrefix?: string;
+  /** Minimum confidence to apply status inference (default: 0.7) */
+  minConfidence?: number;
+  /** Maximum commits to scan per run (default: 100) */
+  maxCommits?: number;
+  /** Enable anomaly detection (default: true) */
+  detectAnomalies?: boolean;
 }
 
 export interface LearningConfig {

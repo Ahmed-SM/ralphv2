@@ -2,6 +2,7 @@
  * Loop - The Ralph-loop execution engine
  *
  * Implements the core loop:
+ * 0. Watch git activity (detect external commits)
  * 1. Read index (AGENTS.md, implementation-plan.md)
  * 2. Pick one task
  * 3. Execute until complete
@@ -32,6 +33,7 @@ import type {
 import { createTracker } from '../skills/normalize/tracker-interface.js';
 import { executeLLMIteration, loadTaskContext, createDefaultLLMProvider } from './llm.js';
 import { detectPatterns, type DetectionContext } from '../skills/discovery/detect-patterns.js';
+import { watchGitActivity, type WatchContext, type WatchOptions, type WatchResult } from '../skills/track/index.js';
 import { generateImprovements, saveProposals } from '../skills/discovery/improve-agents.js';
 import { recordTaskMetrics, computeAggregateMetrics, appendMetricEvent, loadTaskMetrics, getCurrentPeriod, type TaskMetrics } from '../skills/track/record-metrics.js';
 import { validateOperation, type ValidationResult } from '../skills/discovery/validate-task.js';
@@ -156,6 +158,9 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
       console.log(`Run cost limit reached ($${result.totalCost.toFixed(4)} >= $${config.loop.maxCostPerRun}), stopping loop`);
       break;
     }
+
+    // 0. Run git watcher to detect external activity
+    await runGitWatcher(context);
 
     // 1. Read indices
     const agents = await executor.readFile(config.agentsFile);
@@ -734,6 +739,79 @@ export async function runLearningAnalysis(
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     console.log(`  Learning analysis failed: ${msg}`);
+  }
+}
+
+// =============================================================================
+// GIT WATCHER
+// =============================================================================
+
+/**
+ * Run git watcher to detect external git activity and update task status.
+ *
+ * Bridges the LoopContext to the WatchContext expected by watchGitActivity,
+ * using the executor for file I/O and the GitOperations exec for git commands.
+ *
+ * Called at the start of each loop iteration (before picking a task) so that
+ * task selection considers the latest state from external commits.
+ *
+ * Errors are logged but never crash the loop.
+ */
+export async function runGitWatcher(
+  context: LoopContext,
+): Promise<WatchResult | null> {
+  const { config, executor } = context;
+  const gwConfig = config.gitWatcher;
+
+  if (!gwConfig?.enabled) {
+    return null;
+  }
+
+  try {
+    const watchContext: WatchContext = {
+      execCommand: async (command: string): Promise<string> => {
+        const result = await executor.bash(command);
+        if (result.exitCode !== 0 && !result.stdout) {
+          throw new Error(result.stderr || `Command failed with exit code ${result.exitCode}`);
+        }
+        return result.stdout;
+      },
+      readFile: (path: string) => executor.readFile(path),
+      writeFile: (path: string, content: string) => executor.writeFile(path, content),
+      tasksPath: './state/tasks.jsonl',
+      progressPath: './state/progress.jsonl',
+    };
+
+    const watchOptions: WatchOptions = {
+      taskPrefix: gwConfig.taskPrefix ?? config.git.commitPrefix.replace(/-$/, ''),
+      minConfidence: gwConfig.minConfidence ?? 0.7,
+      detectAnomalies: gwConfig.detectAnomalies ?? true,
+      dryRun: config.loop.dryRun ?? false,
+      maxCommits: gwConfig.maxCommits ?? 100,
+    };
+
+    const result = await watchGitActivity(watchContext, watchOptions);
+
+    if (result.inferences.length > 0 || result.anomalies.length > 0) {
+      console.log(`  Git watcher: ${result.inferences.length} status inferences, ${result.anomalies.length} anomalies`);
+    }
+
+    // Fire onAnomaly hook for git watcher anomalies
+    for (const anomaly of result.anomalies) {
+      invokeHook(context.hooks, 'onAnomaly', {
+        type: 'anomaly_detected',
+        anomaly: anomaly.message,
+        severity: anomaly.severity,
+        context: { source: 'git_watcher', taskId: anomaly.taskId, anomalyType: anomaly.type, ...anomaly.data },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    return result;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    console.log(`  Git watcher failed: ${msg}`);
+    return null;
   }
 }
 
