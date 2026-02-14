@@ -8,6 +8,7 @@ import {
   runDiscover,
   runStatus,
   runSync,
+  runLearn,
   loadConfig,
   HELP_TEXT,
   BANNER,
@@ -296,11 +297,12 @@ describe('dispatch', () => {
     expect(errMsgs).toContain('Missing tracker credentials');
   });
 
-  it('returns 0 for learn command (stub)', async () => {
-    const deps = makeDeps();
+  it('dispatches learn command to runLearn', async () => {
+    const deps = makeLearnDeps();
     const code = await dispatch(['learn'], deps);
     expect(code).toBe(0);
-    expect(deps.log).toHaveBeenCalledWith('Learning mode');
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Running learning analysis');
   });
 });
 
@@ -945,5 +947,342 @@ describe('runSync', () => {
 
     expect(code).toBe(0);
     expect(mockSyncBidirectional).toHaveBeenCalledTimes(1);
+  });
+});
+
+// =============================================================================
+// runLearn
+// =============================================================================
+
+const TASK_OPS_WITH_COMPLETED = [
+  JSON.stringify({ op: 'create', task: { id: 'R-001', title: 'Task A', status: 'done', type: 'task', aggregate: 'runtime', domain: 'core' } }),
+  JSON.stringify({ op: 'create', task: { id: 'R-002', title: 'Task B', status: 'done', type: 'bug', aggregate: 'runtime', domain: 'core' } }),
+  JSON.stringify({ op: 'create', task: { id: 'R-003', title: 'Task C', status: 'done', type: 'task', aggregate: 'skills', domain: 'discovery' } }),
+  JSON.stringify({ op: 'create', task: { id: 'R-004', title: 'Task D', status: 'pending', type: 'task', aggregate: 'runtime', domain: 'core' } }),
+].join('\n');
+
+const TASK_OPS_NO_COMPLETED = [
+  JSON.stringify({ op: 'create', task: { id: 'R-001', title: 'Pending', status: 'pending', type: 'task' } }),
+  JSON.stringify({ op: 'create', task: { id: 'R-002', title: 'In Progress', status: 'in_progress', type: 'task' } }),
+].join('\n');
+
+const LEARNING_CONFIG_DISABLED = JSON.stringify({
+  ...JSON.parse(MINIMAL_CONFIG),
+  learning: { enabled: false, autoApplyImprovements: false, minConfidence: 0.7, retentionDays: 90 },
+});
+
+const LEARNING_CONFIG_CUSTOM = JSON.stringify({
+  ...JSON.parse(MINIMAL_CONFIG),
+  learning: { enabled: true, autoApplyImprovements: false, minConfidence: 0.9, retentionDays: 90 },
+});
+
+function makeLearnDeps(overrides: {
+  taskOps?: string;
+  configJson?: string;
+  detectPatterns?: ReturnType<typeof vi.fn>;
+  generateImprovements?: ReturnType<typeof vi.fn>;
+  loadPendingProposals?: ReturnType<typeof vi.fn>;
+  recordTaskMetrics?: ReturnType<typeof vi.fn>;
+  computeAggregateMetrics?: ReturnType<typeof vi.fn>;
+  saveProposals?: ReturnType<typeof vi.fn>;
+  learningContent?: string;
+} = {}): CliDeps {
+  const taskContent = overrides.taskOps ?? TASK_OPS_WITH_COMPLETED;
+  const configContent = overrides.configJson ?? MINIMAL_CONFIG;
+  const learningContent = overrides.learningContent ?? '';
+
+  const mockRecordTaskMetrics = overrides.recordTaskMetrics ?? vi.fn().mockImplementation((task: { id: string }) => ({
+    taskId: task.id, type: 'task', iterations: 3, filesChanged: 5, linesChanged: 100,
+  }));
+  const mockComputeAggregateMetrics = overrides.computeAggregateMetrics ?? vi.fn().mockReturnValue({
+    period: '2026-02', tasksCompleted: 3, avgIterations: 3, avgDurationDays: 1,
+    byType: {}, byComplexity: {},
+  });
+  const mockDetectPatterns = overrides.detectPatterns ?? vi.fn().mockReturnValue({
+    patterns: [],
+    summary: { total: 0, byType: {} },
+  });
+  const mockGenerateImprovements = overrides.generateImprovements ?? vi.fn().mockReturnValue({
+    proposals: [],
+    summary: { total: 0, byTarget: {} },
+  });
+  const mockLoadPendingProposals = overrides.loadPendingProposals ?? vi.fn().mockResolvedValue([]);
+  const mockSaveProposals = overrides.saveProposals ?? vi.fn().mockResolvedValue(undefined);
+
+  const readFile = vi.fn().mockImplementation(async (path: string) => {
+    if (path.endsWith('ralph.config.json')) return configContent;
+    if (path.endsWith('tasks.jsonl')) return taskContent;
+    if (path.endsWith('learning.jsonl')) return learningContent;
+    throw new Error(`Unexpected read: ${path}`);
+  });
+
+  const importModule = vi.fn().mockImplementation(async (specifier: string) => {
+    if (specifier === '../skills/track/record-metrics.js') return {
+      recordTaskMetrics: mockRecordTaskMetrics,
+      computeAggregateMetrics: mockComputeAggregateMetrics,
+      getCurrentPeriod: vi.fn().mockReturnValue('2026-02'),
+      printMetricsSummary: vi.fn(),
+    };
+    if (specifier === '../skills/discovery/detect-patterns.js') return {
+      detectPatterns: mockDetectPatterns,
+      printPatterns: vi.fn(),
+    };
+    if (specifier === '../skills/discovery/improve-agents.js') return {
+      generateImprovements: mockGenerateImprovements,
+      saveProposals: mockSaveProposals,
+      loadPendingProposals: mockLoadPendingProposals,
+      printProposals: vi.fn(),
+    };
+    throw new Error(`Unexpected import: ${specifier}`);
+  });
+
+  return makeDeps({ readFile, importModule });
+}
+
+describe('runLearn', () => {
+  it('logs analysis header', async () => {
+    const deps = makeLearnDeps();
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runLearn(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Running learning analysis');
+  });
+
+  it('returns 0 when learning is disabled', async () => {
+    const deps = makeLearnDeps({ configJson: LEARNING_CONFIG_DISABLED });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runLearn(args, deps);
+
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Learning is disabled');
+  });
+
+  it('returns 0 when no completed tasks exist', async () => {
+    const deps = makeLearnDeps({ taskOps: TASK_OPS_NO_COMPLETED });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runLearn(args, deps);
+
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('No completed tasks');
+  });
+
+  it('returns 0 when tasks file is missing', async () => {
+    const readFile = vi.fn().mockImplementation(async (path: string) => {
+      if (path.endsWith('ralph.config.json')) return MINIMAL_CONFIG;
+      if (path.endsWith('tasks.jsonl')) throw new Error('ENOENT');
+      if (path.endsWith('learning.jsonl')) return '';
+      throw new Error(`Unexpected: ${path}`);
+    });
+    const deps = makeLearnDeps();
+    (deps as { readFile: ReturnType<typeof vi.fn> }).readFile = readFile;
+
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+    const code = await runLearn(args, deps);
+
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('No completed tasks');
+  });
+
+  it('calls recordTaskMetrics for each completed task', async () => {
+    const mockRecordTaskMetrics = vi.fn().mockReturnValue({ taskId: 'x', type: 'task' });
+    const deps = makeLearnDeps({ recordTaskMetrics: mockRecordTaskMetrics });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runLearn(args, deps);
+
+    // 3 completed tasks (R-001, R-002, R-003), R-004 is pending
+    expect(mockRecordTaskMetrics).toHaveBeenCalledTimes(3);
+  });
+
+  it('calls detectPatterns with correct context', async () => {
+    const mockDetectPatterns = vi.fn().mockReturnValue({ patterns: [], summary: { total: 0, byType: {} } });
+    const deps = makeLearnDeps({ detectPatterns: mockDetectPatterns });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runLearn(args, deps);
+
+    expect(mockDetectPatterns).toHaveBeenCalledTimes(1);
+    const ctx = mockDetectPatterns.mock.calls[0][0];
+    expect(ctx.minConfidence).toBe(0.7);
+    expect(ctx.minSamples).toBe(3);
+    expect(ctx.metrics).toHaveLength(3);
+    expect(ctx.aggregates).toHaveLength(1);
+    expect(ctx.tasks).toBeInstanceOf(Map);
+  });
+
+  it('uses minConfidence from config', async () => {
+    const mockDetectPatterns = vi.fn().mockReturnValue({ patterns: [], summary: { total: 0, byType: {} } });
+    const deps = makeLearnDeps({ configJson: LEARNING_CONFIG_CUSTOM, detectPatterns: mockDetectPatterns });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runLearn(args, deps);
+
+    const ctx = mockDetectPatterns.mock.calls[0][0];
+    expect(ctx.minConfidence).toBe(0.9);
+  });
+
+  it('calls generateImprovements with patterns and aggregate', async () => {
+    const mockPattern = { type: 'estimation_drift', confidence: 0.8, data: {} };
+    const mockDetectPatterns = vi.fn().mockReturnValue({ patterns: [mockPattern], summary: { total: 1, byType: {} } });
+    const mockGenerateImprovements = vi.fn().mockReturnValue({ proposals: [], summary: { total: 0, byTarget: {} } });
+    const deps = makeLearnDeps({ detectPatterns: mockDetectPatterns, generateImprovements: mockGenerateImprovements });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runLearn(args, deps);
+
+    expect(mockGenerateImprovements).toHaveBeenCalledTimes(1);
+    const [patterns, aggregate] = mockGenerateImprovements.mock.calls[0];
+    expect(patterns).toEqual([mockPattern]);
+    expect(aggregate).toBeDefined();
+  });
+
+  it('saves proposals when not dry-run', async () => {
+    const mockProposal = { id: 'P-001', title: 'Improve estimates', target: 'AGENTS.md', status: 'pending' };
+    const mockGenerateImprovements = vi.fn().mockReturnValue({
+      proposals: [mockProposal],
+      summary: { total: 1, byTarget: {} },
+    });
+    const mockSaveProposals = vi.fn().mockResolvedValue(undefined);
+    const deps = makeLearnDeps({ generateImprovements: mockGenerateImprovements, saveProposals: mockSaveProposals });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runLearn(args, deps);
+
+    expect(mockSaveProposals).toHaveBeenCalledTimes(1);
+    const [, , path, proposals] = mockSaveProposals.mock.calls[0];
+    expect(path).toBe('./state/learning.jsonl');
+    expect(proposals).toEqual([mockProposal]);
+  });
+
+  it('does not save proposals in dry-run mode', async () => {
+    const mockProposal = { id: 'P-001', title: 'Improve estimates', target: 'AGENTS.md', status: 'pending' };
+    const mockGenerateImprovements = vi.fn().mockReturnValue({
+      proposals: [mockProposal],
+      summary: { total: 1, byTarget: {} },
+    });
+    const mockSaveProposals = vi.fn().mockResolvedValue(undefined);
+    const deps = makeLearnDeps({ generateImprovements: mockGenerateImprovements, saveProposals: mockSaveProposals });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: true, taskFilter: undefined };
+
+    await runLearn(args, deps);
+
+    expect(mockSaveProposals).not.toHaveBeenCalled();
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('DRY RUN');
+  });
+
+  it('displays pending proposals', async () => {
+    const mockLoadPendingProposals = vi.fn().mockResolvedValue([
+      { id: 'P-001', title: 'Fix estimates', target: 'AGENTS.md', section: 'Estimation', priority: 'high', confidence: 0.85, description: 'Add multiplier' },
+      { id: 'P-002', title: 'Add tests', target: 'agents/learner.md', priority: 'medium', confidence: 0.72, description: 'Improve coverage' },
+    ]);
+    const deps = makeLearnDeps({ loadPendingProposals: mockLoadPendingProposals });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runLearn(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Pending proposals: 2');
+    expect(logged).toContain('P-001');
+    expect(logged).toContain('Fix estimates');
+    expect(logged).toContain('AGENTS.md');
+    expect(logged).toContain('Estimation');
+    expect(logged).toContain('85%');
+    expect(logged).toContain('P-002');
+    expect(logged).toContain('Add tests');
+  });
+
+  it('prints learning summary', async () => {
+    const mockDetectPatterns = vi.fn().mockReturnValue({
+      patterns: [{ type: 'bug_hotspot' }, { type: 'estimation_drift' }],
+      summary: { total: 2, byType: {} },
+    });
+    const mockGenerateImprovements = vi.fn().mockReturnValue({
+      proposals: [{ id: 'P-001' }],
+      summary: { total: 1, byTarget: {} },
+    });
+    const deps = makeLearnDeps({ detectPatterns: mockDetectPatterns, generateImprovements: mockGenerateImprovements });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runLearn(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('LEARNING SUMMARY');
+    expect(logged).toContain('Tasks analyzed:    3');
+    expect(logged).toContain('Patterns detected: 2');
+    expect(logged).toContain('Proposals created: 1');
+  });
+
+  it('replays update operations before analysis', async () => {
+    const taskOps = [
+      JSON.stringify({ op: 'create', task: { id: 'R-001', title: 'T', status: 'pending', type: 'task' } }),
+      JSON.stringify({ op: 'update', id: 'R-001', changes: { status: 'done' } }),
+    ].join('\n');
+    const mockRecordTaskMetrics = vi.fn().mockReturnValue({ taskId: 'R-001', type: 'task' });
+    const deps = makeLearnDeps({ taskOps, recordTaskMetrics: mockRecordTaskMetrics });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runLearn(args, deps);
+
+    expect(mockRecordTaskMetrics).toHaveBeenCalledTimes(1);
+    const task = mockRecordTaskMetrics.mock.calls[0][0];
+    expect(task.status).toBe('done');
+  });
+
+  it('replays link operations before analysis', async () => {
+    const taskOps = [
+      JSON.stringify({ op: 'create', task: { id: 'R-001', title: 'T', status: 'done', type: 'task' } }),
+      JSON.stringify({ op: 'link', id: 'R-001', externalId: 'JIRA-42', externalUrl: 'https://jira.example.com/JIRA-42' }),
+    ].join('\n');
+    const mockDetectPatterns = vi.fn().mockReturnValue({ patterns: [], summary: { total: 0, byType: {} } });
+    const deps = makeLearnDeps({ taskOps, detectPatterns: mockDetectPatterns });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runLearn(args, deps);
+
+    const ctx = mockDetectPatterns.mock.calls[0][0];
+    const task = ctx.tasks.get('R-001');
+    expect(task.externalId).toBe('JIRA-42');
+  });
+
+  it('does not save proposals when none generated', async () => {
+    const mockSaveProposals = vi.fn().mockResolvedValue(undefined);
+    const deps = makeLearnDeps({ saveProposals: mockSaveProposals });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runLearn(args, deps);
+
+    expect(mockSaveProposals).not.toHaveBeenCalled();
+  });
+
+  it('logs saved proposal count', async () => {
+    const mockGenerateImprovements = vi.fn().mockReturnValue({
+      proposals: [{ id: 'P-001' }, { id: 'P-002' }],
+      summary: { total: 2, byTarget: {} },
+    });
+    const deps = makeLearnDeps({ generateImprovements: mockGenerateImprovements });
+    const args: ParsedArgs = { command: 'learn', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runLearn(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Saved 2 proposal(s)');
+    expect(logged).toContain('learning.jsonl');
+  });
+
+  it('works via dispatch with flags', async () => {
+    const deps = makeLearnDeps();
+    const code = await dispatch(['learn', '--dry-run'], deps);
+
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('DRY RUN');
   });
 });

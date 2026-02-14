@@ -365,6 +365,183 @@ function printSyncResult(deps: CliDeps, result: SyncResultShape, direction: stri
 }
 
 // =============================================================================
+// LEARN
+// =============================================================================
+
+/**
+ * Run learning analysis: metrics, pattern detection, and improvement proposals.
+ *
+ * Supports subcommands via --task:
+ *   ralph learn                  → full analysis (metrics + patterns + improvements)
+ *   ralph learn --dry-run        → analysis without writing proposals
+ *
+ * Delegates to skills/discovery and skills/track modules for the heavy lifting.
+ */
+export async function runLearn(args: ParsedArgs, deps: CliDeps): Promise<number> {
+  deps.log('Running learning analysis...\n');
+
+  const workDir = resolve(deps.cwd);
+  const config = await loadConfig(resolve(workDir, args.configPath), deps.readFile);
+
+  if (!config.learning.enabled) {
+    deps.log('Learning is disabled in config (learning.enabled = false).');
+    return 0;
+  }
+
+  if (args.dryRun) deps.log('Mode: DRY RUN (no changes will be written)\n');
+
+  const minConfidence = config.learning.minConfidence ?? 0.7;
+
+  // Load modules
+  const recordMetricsMod = await deps.importModule('../skills/track/record-metrics.js') as {
+    recordTaskMetrics: (task: unknown) => unknown;
+    computeAggregateMetrics: (metrics: unknown[], period: string) => unknown;
+    getCurrentPeriod: (granularity?: string) => string;
+    printMetricsSummary: (aggregate: unknown) => void;
+  };
+
+  const detectPatternsMod = await deps.importModule('../skills/discovery/detect-patterns.js') as {
+    detectPatterns: (context: unknown) => { patterns: unknown[]; summary: unknown };
+    printPatterns: (result: unknown) => void;
+  };
+
+  const improveAgentsMod = await deps.importModule('../skills/discovery/improve-agents.js') as {
+    generateImprovements: (patterns: unknown[], aggregate?: unknown) => { proposals: unknown[]; summary: unknown };
+    saveProposals: (readFile: unknown, writeFile: unknown, path: string, proposals: unknown[]) => Promise<void>;
+    loadPendingProposals: (readFile: unknown, path: string) => Promise<Array<{
+      id: string; title: string; target: string; section?: string;
+      priority: string; confidence: number; description: string;
+    }>>;
+    printProposals: (result: unknown) => void;
+  };
+
+  // Build file I/O functions scoped to working directory
+  const readFileFn = (path: string) =>
+    deps.readFile(resolve(workDir, path.replace(/^\.\//, '')), 'utf-8');
+  const writeFileFn = deps.writeFile
+    ? (path: string, content: string) => deps.writeFile!(resolve(workDir, path.replace(/^\.\//, '')), content)
+    : async (_path: string, _content: string) => {};
+
+  const tasksPath = './state/tasks.jsonl';
+  const learningPath = './state/learning.jsonl';
+
+  // Step 1: Load tasks
+  const tasks = await loadTasksForLearning(readFileFn, tasksPath);
+  const completedTasks = Array.from(tasks.values()).filter(
+    (t: { status: string }) => t.status === 'done'
+  );
+
+  if (completedTasks.length === 0) {
+    deps.log('No completed tasks found for analysis.');
+    deps.log('Run tasks through the Ralph loop first, then analyze.');
+    return 0;
+  }
+
+  // Step 2: Compute metrics
+  const taskMetrics = completedTasks.map(t => recordMetricsMod.recordTaskMetrics(t));
+  const period = recordMetricsMod.getCurrentPeriod();
+  const aggregate = recordMetricsMod.computeAggregateMetrics(taskMetrics, period);
+
+  deps.log(`Tasks analyzed: ${taskMetrics.length}`);
+  deps.log('');
+  recordMetricsMod.printMetricsSummary(aggregate);
+
+  // Step 3: Detect patterns
+  const detectionContext = {
+    tasks,
+    metrics: taskMetrics,
+    aggregates: [aggregate],
+    minConfidence,
+    minSamples: 3,
+  };
+
+  const patternResult = detectPatternsMod.detectPatterns(detectionContext);
+  detectPatternsMod.printPatterns(patternResult);
+
+  // Step 4: Generate improvements
+  const improvementResult = improveAgentsMod.generateImprovements(
+    patternResult.patterns,
+    aggregate
+  );
+  improveAgentsMod.printProposals(improvementResult);
+
+  // Step 5: Save proposals (unless dry-run)
+  if (!args.dryRun && improvementResult.proposals.length > 0) {
+    await improveAgentsMod.saveProposals(
+      readFileFn,
+      writeFileFn,
+      learningPath,
+      improvementResult.proposals
+    );
+    deps.log(`\nSaved ${improvementResult.proposals.length} proposal(s) to ${learningPath}`);
+  }
+
+  // Step 6: Show pending proposals
+  const pending = await improveAgentsMod.loadPendingProposals(readFileFn, learningPath);
+  if (pending.length > 0) {
+    deps.log(`\nPending proposals: ${pending.length}`);
+    for (const p of pending) {
+      deps.log(`  [${p.id}] ${p.title} (${p.target}${p.section ? ' > ' + p.section : ''}) — ${(p.confidence * 100).toFixed(0)}% confidence`);
+    }
+  }
+
+  // Summary
+  deps.log('\n--- LEARNING SUMMARY ---');
+  deps.log(`  Tasks analyzed:    ${taskMetrics.length}`);
+  deps.log(`  Patterns detected: ${patternResult.patterns.length}`);
+  deps.log(`  Proposals created: ${improvementResult.proposals.length}`);
+  deps.log(`  Pending proposals: ${pending.length}`);
+  deps.log('--- END ---\n');
+
+  return 0;
+}
+
+/**
+ * Load tasks from tasks.jsonl via operation replay, returning a Map<string, Task>.
+ * Uses the provided readFile function scoped to the working directory.
+ */
+async function loadTasksForLearning(
+  readFile: (path: string) => Promise<string>,
+  tasksPath: string,
+): Promise<Map<string, Record<string, unknown>>> {
+  const tasks = new Map<string, Record<string, unknown>>();
+
+  try {
+    const content = await readFile(tasksPath);
+    if (!content.trim()) return tasks;
+
+    const lines = content.trim().split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const op = JSON.parse(line);
+
+      switch (op.op) {
+        case 'create':
+          tasks.set(op.task.id, { ...op.task });
+          break;
+        case 'update': {
+          const task = tasks.get(op.id);
+          if (task) Object.assign(task, op.changes);
+          break;
+        }
+        case 'link': {
+          const task = tasks.get(op.id);
+          if (task) {
+            task.externalId = op.externalId;
+            task.externalUrl = op.externalUrl;
+          }
+          break;
+        }
+      }
+    }
+  } catch {
+    // File doesn't exist yet — fine
+  }
+
+  return tasks;
+}
+
+// =============================================================================
 // HELPERS
 // =============================================================================
 
@@ -420,9 +597,7 @@ export async function dispatch(argv: string[], deps: CliDeps): Promise<number> {
       return runSync(args, deps);
 
     case 'learn':
-      deps.log('Learning mode');
-      deps.log('Use: npm run learn');
-      return 0;
+      return runLearn(args, deps);
 
     case 'help':
       deps.log(HELP_TEXT);

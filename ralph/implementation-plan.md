@@ -91,6 +91,7 @@ Ralph v1 MVP is now functional with:
 - Unit test suite (679 tests across 20 core modules)
 - Property-based test suite (79 tests across 4 parsing/state modules)
 - Integration test suite (56 tests across 3 pipelines, including live git)
+- CLI commands: run, discover, sync, status, learn
 
 ### Test Coverage (Phase 7) ✅ COMPLETE
 - [x] parse-markdown.ts — 12 tests (parsing, metadata extraction, task list flattening)
@@ -460,7 +461,7 @@ Next steps for production readiness:
 11. Live testing with Jira credentials
 12. Live testing with actual git repository
 13. Live testing with Linear API key
-14. Standalone learn CLI command
+14. ~~Standalone learn CLI command~~ ✅ Done
 
 ### Standalone Sync CLI Command (Phase 31) ✅ COMPLETE
 - [x] Implemented `runSync()` in runtime/cli.ts — standalone `ralph sync` command
@@ -478,6 +479,28 @@ Next steps for production readiness:
   - runSync — 14 tests (header logging, missing tracker config, missing credentials, tracker creation failure, bidirectional success, sync errors exit code, error display, task filter passthrough, dry-run passthrough, auth resolution, tracker creation args, syncBidirectional throws, adapter import failure, summary with durations)
   - dispatch integration — 2 tests (sync via dispatch with creds, sync combined flags)
 - [x] Total: 16 new tests (1306 total across 34 test files)
+
+### Standalone Learn CLI Command (Phase 32) ✅ COMPLETE
+- [x] Implemented `runLearn()` in runtime/cli.ts — standalone `ralph learn` command
+- [x] Loads ralph.config.json and checks `learning.enabled` flag
+- [x] Reads `minConfidence` from config (default 0.7)
+- [x] Loads and replays task operations from state/tasks.jsonl (create, update, link)
+- [x] Filters to completed tasks, computes metrics via `recordTaskMetrics()`
+- [x] Computes aggregate metrics for current period via `computeAggregateMetrics()`
+- [x] Runs pattern detection via `detectPatterns()` with config-driven minConfidence
+- [x] Generates improvement proposals via `generateImprovements()`
+- [x] Saves proposals to state/learning.jsonl (unless `--dry-run`)
+- [x] Displays pending proposals with ID, title, target, confidence
+- [x] Prints learning summary (tasks analyzed, patterns detected, proposals created, pending)
+- [x] Supports `--dry-run` (no writes, logs mode)
+- [x] Graceful handling of missing tasks file
+- [x] Returns 0 when learning disabled or no completed tasks
+- [x] Wired into `dispatch()` (replaces stub)
+- [x] Dynamic module imports via CliDeps.importModule for testability
+- [x] Unit tests — 17 tests → [runtime/cli.test.ts](./runtime/cli.test.ts)
+  - runLearn — 15 tests (header logging, learning disabled, no completed tasks, missing tasks file, recordTaskMetrics call count, detectPatterns context, minConfidence from config, generateImprovements args, save proposals, dry-run skips save, pending proposals display, learning summary, operation replay, link replay, no-save when empty, saved count logging)
+  - dispatch integration — 2 tests (learn via dispatch, learn with --dry-run flag)
+- [x] Total: 17 new tests (1323 total across 34 test files)
 
 ## Dependencies
 
