@@ -31,6 +31,11 @@ export type TaskStatus =
 
 export type Complexity = 'trivial' | 'simple' | 'moderate' | 'complex' | 'unknown';
 
+export type CompletionCriteria =
+  | { type: 'file_exists'; path: string }
+  | { type: 'test_passing'; grep: string; command?: string }
+  | { type: 'validate'; script: string };
+
 export interface SourceInfo {
   type: 'spec' | 'commit' | 'pr' | 'manual' | 'inferred';
   path?: string;
@@ -70,6 +75,9 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+
+  // Completion
+  completion?: CompletionCriteria;
 
   // Learning
   estimate?: number;

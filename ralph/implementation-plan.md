@@ -383,6 +383,28 @@ Ralph v1 MVP is now functional with:
   - edge cases — 6 tests (empty blockedBy, undefined blockedBy, no changes, operation type, taskId, result shape)
 - [x] Total: 77 new tests (1192 total across 32 test files)
 
+### Completion Detection Methods (Phase 28) ✅ COMPLETE
+- [x] Added `CompletionCriteria` type to types/index.ts (file_exists, test_passing, validate)
+- [x] Added optional `completion` field to `Task` interface
+- [x] Implement completion.ts → [runtime/completion.ts](./runtime/completion.ts)
+- [x] checkCompletion — top-level dispatcher, returns null when no criteria defined
+- [x] checkTestPassing — runs `npm test -- --grep "<id>"` (or custom command), exit 0 = complete
+- [x] checkFileExists — checks that expected artifact file exists and is non-empty
+- [x] checkValidate — runs custom validation script with RALPH_TASK_ID env var, exit 0 = complete
+- [x] createCompletionContext — adapter from Executor to CompletionContext interface
+- [x] Wired into executeTaskLoop in loop.ts — checks task.completion after each iteration
+- [x] Exported from runtime/index.ts
+- [x] Unit tests — 49 tests → [runtime/completion.test.ts](./runtime/completion.test.ts)
+  - checkCompletion — 5 tests (null for no criteria, null for undefined, delegates to file_exists/test_passing/validate)
+  - checkCriteria — 3 tests (dispatches each criteria type)
+  - checkTestPassing — 11 tests (exit 0, default command, custom command, empty grep fallback, exit 1, stderr in reason, stdout fallback, non-zero exit codes, bash error, non-Error throws, truncation)
+  - checkFileExists — 5 tests (file exists, file missing, correct path, artifacts on success, no artifacts on failure)
+  - checkValidate — 10 tests (exit 0, RALPH_TASK_ID env, exit non-zero, stdout as artifacts, empty stdout, script error, non-Error throws, truncation, stderr in reason, stdout fallback)
+  - createCompletionContext — 4 tests (bash passthrough, fileExists true/false/error)
+  - integration scenarios — 6 tests (file_exists complete/incomplete, test_passing complete/incomplete, validate complete/incomplete)
+  - edge cases — 5 tests (result shape, optional artifacts, custom command ignores grep, empty path, complex script path)
+- [x] Total: 49 new tests (1241 total across 33 test files)
+
 Next steps for production readiness:
 1. ~~Add LLM integration for intelligent task execution~~ ✅ Done
 2. ~~Implement concrete LLM API client (Anthropic/OpenAI HTTP adapter)~~ ✅ Done

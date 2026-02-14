@@ -15,6 +15,7 @@ export { createSandbox, Sandbox, printSandboxStatus, type FileChange } from './s
 export { executeLLMIteration, executeToolCall, buildSystemPrompt, buildIterationPrompt, interpretResponse, loadTaskContext, createLLMProvider, createDefaultLLMProvider, AGENT_TOOLS } from './llm.js';
 export { AnthropicProvider, OpenAIProvider, createProvider, resolveApiKey, formatAnthropicMessages, formatAnthropicTools, parseAnthropicResponse, mapAnthropicStopReason, formatOpenAIMessages, formatOpenAITools, parseOpenAIResponse, mapOpenAIFinishReason } from './llm-providers.js';
 export { parseArgs, resolveCommand, loadConfig, dispatch, runMain, runDiscover, runStatus, replayTaskOps, HELP_TEXT, BANNER, DEFAULT_CONFIG_PATH, type ParsedArgs, type CliCommand, type CliDeps } from './cli.js';
+export { checkCompletion, checkCriteria, checkTestPassing, checkFileExists, checkValidate, createCompletionContext, type CompletionCheckResult, type CompletionContext } from './completion.js';
 
 // When executed directly (tsx runtime/index.ts), run the CLI
 const isDirectExecution = process.argv[1]?.endsWith('runtime/index.ts')

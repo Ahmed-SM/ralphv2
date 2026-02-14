@@ -35,6 +35,7 @@ import { detectPatterns, type DetectionContext } from '../skills/discovery/detec
 import { generateImprovements, saveProposals } from '../skills/discovery/improve-agents.js';
 import { recordTaskMetrics, computeAggregateMetrics, appendMetricEvent, loadTaskMetrics, getCurrentPeriod, type TaskMetrics } from '../skills/track/record-metrics.js';
 import { validateOperation, type ValidationResult } from '../skills/discovery/validate-task.js';
+import { checkCompletion, createCompletionContext } from './completion.js';
 
 export interface LoopContext {
   config: RuntimeConfig;
@@ -435,6 +436,16 @@ export async function executeTaskLoop(
     if (result.status === 'failed') {
       console.log(`  Iteration failed: ${result.error}`);
       // Continue to retry unless max iterations reached
+    }
+
+    // Check task-defined completion criteria (test_passing, file_exists, validate)
+    if (task.completion) {
+      const completionCtx = createCompletionContext(context.executor);
+      const completionCheck = await checkCompletion(task, completionCtx);
+      if (completionCheck?.complete) {
+        console.log(`  Completion criteria met: ${completionCheck.reason} (cost: $${taskCost.toFixed(4)})`);
+        return { success: true, iterations, cost: taskCost };
+      }
     }
 
     // Continue to next iteration
