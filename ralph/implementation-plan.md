@@ -405,6 +405,31 @@ Ralph v1 MVP is now functional with:
   - edge cases — 5 tests (result shape, optional artifacts, custom command ignores grep, empty path, complex script path)
 - [x] Total: 49 new tests (1241 total across 33 test files)
 
+### Missing Pattern Detectors (Phase 29) ✅ COMPLETE
+- [x] Implement detectTestGaps → [skills/discovery/detect-patterns.ts](./skills/discovery/detect-patterns.ts)
+  - Groups tasks by aggregate/domain, computes test-to-total task ratio
+  - Detects areas with < 20% test coverage and >= 3 non-test tasks
+  - Reports worst coverage area first, includes coverage percentage
+  - Confidence scales with sample size
+- [x] Implement detectHighChurn → [skills/discovery/detect-patterns.ts](./skills/discovery/detect-patterns.ts)
+  - Groups metrics by aggregate/domain, sums filesChanged per area
+  - Detects areas with > 1.5x the overall average files-per-task
+  - Requires minSamples tasks (default 5) per area
+  - Reports total files, task count, and avgFilesPerTask
+- [x] Implement detectCoupling → [skills/discovery/detect-patterns.ts](./skills/discovery/detect-patterns.ts)
+  - Detects co-change patterns between areas (aggregate, domain, tags)
+  - Generates pairs from areas touched by each task
+  - Requires >= 3 co-occurrences to trigger
+  - Deduplicates tags that match aggregate or domain
+  - Reports most coupled pair first
+- [x] Wired all 3 detectors into detectPatterns() detector array
+- [x] Exported detectTestGaps, detectHighChurn, detectCoupling for direct testing
+- [x] Unit tests — 29 tests
+  - test_gap — 10 tests (no tests, low ratio, adequate ratio, few tasks, worst first, domain fallback, suggestion, evidence, description, confidence scaling)
+  - high_churn — 9 tests (high frequency, few samples, similar areas, no filesChanged, zero filesChanged, domain fallback, avgFilesPerTask, suggestion, confidence scaling)
+  - coupling — 10 tests (co-change detection, few co-changes, same area, via tags, most coupled first, suggestion, evidence, no areas, no duplicate tags, confidence scaling)
+- [x] Total: 29 new tests (1270 total across 33 test files)
+
 Next steps for production readiness:
 1. ~~Add LLM integration for intelligent task execution~~ ✅ Done
 2. ~~Implement concrete LLM API client (Anthropic/OpenAI HTTP adapter)~~ ✅ Done

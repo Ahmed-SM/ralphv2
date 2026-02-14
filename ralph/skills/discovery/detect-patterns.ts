@@ -76,6 +76,9 @@ export function detectPatterns(context: DetectionContext): PatternDetectionResul
     detectVelocityTrends,
     detectBottlenecks,
     detectComplexitySignals,
+    detectTestGaps,
+    detectHighChurn,
+    detectCoupling,
   ];
 
   for (const detector of detectors) {
@@ -477,6 +480,197 @@ function detectComplexitySignals(context: DetectionContext): DetectedPattern | n
   }
 
   return null;
+}
+
+/**
+ * Detect areas with low test coverage (few test tasks relative to feature/bug tasks)
+ */
+export function detectTestGaps(context: DetectionContext): DetectedPattern | null {
+  // Group tasks by aggregate
+  const byAggregate = new Map<string, { total: number; tests: number; taskIds: string[] }>();
+
+  for (const task of context.tasks.values()) {
+    const key = task.aggregate || task.domain || 'unknown';
+    const entry = byAggregate.get(key) || { total: 0, tests: 0, taskIds: [] };
+    entry.total++;
+    if (task.type === 'test') {
+      entry.tests++;
+    }
+    entry.taskIds.push(task.id);
+    byAggregate.set(key, entry);
+  }
+
+  // Find areas with many tasks but few/no tests
+  const gaps = Array.from(byAggregate.entries())
+    .filter(([, stats]) => {
+      const nonTestCount = stats.total - stats.tests;
+      return nonTestCount >= 3 && stats.tests / stats.total < 0.2;
+    })
+    .sort((a, b) => {
+      // Sort by test ratio ascending (worst coverage first)
+      const ratioA = a[1].tests / a[1].total;
+      const ratioB = b[1].tests / b[1].total;
+      return ratioA - ratioB;
+    });
+
+  if (gaps.length === 0) {
+    return null;
+  }
+
+  const worstGap = gaps[0];
+  const coverage = worstGap[1].tests / worstGap[1].total;
+
+  return {
+    type: 'test_gap',
+    confidence: Math.min(worstGap[1].total / 10, 1) * 0.8,
+    description: `"${worstGap[0]}" has ${(coverage * 100).toFixed(0)}% test coverage (${worstGap[1].tests}/${worstGap[1].total} tasks are tests)`,
+    data: {
+      aggregate: worstGap[0],
+      totalTasks: worstGap[1].total,
+      testTasks: worstGap[1].tests,
+      coverage,
+      gaps: gaps.slice(0, 5).map(([name, stats]) => ({
+        name,
+        total: stats.total,
+        tests: stats.tests,
+        coverage: stats.tests / stats.total,
+      })),
+    },
+    evidence: worstGap[1].taskIds.slice(0, 5),
+    suggestion: `Add test tasks for "${worstGap[0]}" to improve coverage`,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Detect files/areas that change frequently (high churn indicates instability)
+ */
+export function detectHighChurn(context: DetectionContext): DetectedPattern | null {
+  const minSamples = context.minSamples ?? 5;
+
+  // Group metrics by aggregate, summing filesChanged
+  const byAggregate = new Map<string, { totalFiles: number; taskCount: number; taskIds: string[] }>();
+
+  for (const m of context.metrics) {
+    if (m.filesChanged === undefined || m.filesChanged === 0) continue;
+    const key = m.aggregate || m.domain || 'unknown';
+    const entry = byAggregate.get(key) || { totalFiles: 0, taskCount: 0, taskIds: [] };
+    entry.totalFiles += m.filesChanged;
+    entry.taskCount++;
+    entry.taskIds.push(m.taskId);
+    byAggregate.set(key, entry);
+  }
+
+  // Find areas with high churn (many file changes across multiple tasks)
+  const churnAreas = Array.from(byAggregate.entries())
+    .filter(([, stats]) => stats.taskCount >= minSamples)
+    .map(([name, stats]) => ({
+      name,
+      ...stats,
+      avgFilesPerTask: stats.totalFiles / stats.taskCount,
+    }))
+    .sort((a, b) => b.totalFiles - a.totalFiles);
+
+  if (churnAreas.length === 0) {
+    return null;
+  }
+
+  // Compare top churn area to overall average
+  const allFiles = Array.from(byAggregate.values()).reduce((sum, s) => sum + s.totalFiles, 0);
+  const allTasks = Array.from(byAggregate.values()).reduce((sum, s) => sum + s.taskCount, 0);
+  const overallAvg = allTasks > 0 ? allFiles / allTasks : 0;
+
+  const topChurn = churnAreas[0];
+
+  // High churn if > 1.5x the overall average files per task
+  if (overallAvg > 0 && topChurn.avgFilesPerTask < overallAvg * 1.5) {
+    return null;
+  }
+
+  return {
+    type: 'high_churn',
+    confidence: Math.min(topChurn.taskCount / 10, 1) * 0.75,
+    description: `"${topChurn.name}" has high churn (${topChurn.totalFiles} file changes across ${topChurn.taskCount} tasks)`,
+    data: {
+      aggregate: topChurn.name,
+      totalFiles: topChurn.totalFiles,
+      taskCount: topChurn.taskCount,
+      avgFilesPerTask: topChurn.avgFilesPerTask,
+      overallAvg,
+      churnAreas: churnAreas.slice(0, 5).map(a => ({
+        name: a.name,
+        totalFiles: a.totalFiles,
+        taskCount: a.taskCount,
+        avgFilesPerTask: a.avgFilesPerTask,
+      })),
+    },
+    evidence: topChurn.taskIds.slice(0, 5),
+    suggestion: `Investigate instability in "${topChurn.name}" — frequent file changes may indicate design issues`,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Detect coupling between areas (changes to A require changes to B)
+ */
+export function detectCoupling(context: DetectionContext): DetectedPattern | null {
+  // Group tasks by their tags to find co-occurring aggregates/domains
+  // A task that touches multiple aggregates indicates coupling
+  const pairCounts = new Map<string, { count: number; taskIds: string[] }>();
+
+  for (const m of context.metrics) {
+    const areas: string[] = [];
+    if (m.aggregate) areas.push(m.aggregate);
+    if (m.domain && m.domain !== m.aggregate) areas.push(m.domain);
+    if (m.tags) {
+      for (const tag of m.tags) {
+        if (tag !== m.aggregate && tag !== m.domain) {
+          areas.push(tag);
+        }
+      }
+    }
+
+    // Generate pairs from areas touched by this task
+    for (let i = 0; i < areas.length; i++) {
+      for (let j = i + 1; j < areas.length; j++) {
+        const pair = [areas[i], areas[j]].sort().join(' <-> ');
+        const entry = pairCounts.get(pair) || { count: 0, taskIds: [] };
+        entry.count++;
+        entry.taskIds.push(m.taskId);
+        pairCounts.set(pair, entry);
+      }
+    }
+  }
+
+  // Find pairs that co-occur frequently (>= 3 times)
+  const coupledPairs = Array.from(pairCounts.entries())
+    .filter(([, stats]) => stats.count >= 3)
+    .sort((a, b) => b[1].count - a[1].count);
+
+  if (coupledPairs.length === 0) {
+    return null;
+  }
+
+  const topPair = coupledPairs[0];
+  const [areaA, areaB] = topPair[0].split(' <-> ');
+
+  return {
+    type: 'coupling',
+    confidence: Math.min(topPair[1].count / 8, 1) * 0.8,
+    description: `"${areaA}" and "${areaB}" are coupled (co-changed in ${topPair[1].count} tasks)`,
+    data: {
+      areaA,
+      areaB,
+      coChangeCount: topPair[1].count,
+      pairs: coupledPairs.slice(0, 5).map(([pair, stats]) => ({
+        pair,
+        count: stats.count,
+      })),
+    },
+    evidence: topPair[1].taskIds.slice(0, 5),
+    suggestion: `Consider decoupling "${areaA}" and "${areaB}" to reduce change dependencies`,
+    timestamp: new Date().toISOString(),
+  };
 }
 
 // =============================================================================

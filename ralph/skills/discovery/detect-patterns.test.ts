@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectPatterns, type DetectionContext } from './detect-patterns.js';
+import { detectPatterns, detectTestGaps, detectHighChurn, detectCoupling, type DetectionContext } from './detect-patterns.js';
 import type { Task } from '../../types/index.js';
 import type { TaskMetrics, AggregateMetrics } from '../track/record-metrics.js';
 
@@ -600,5 +600,528 @@ describe('pattern summary', () => {
       expect(result.summary.topSuggestions.length).toBeGreaterThanOrEqual(0);
       expect(result.summary.topSuggestions.length).toBeLessThanOrEqual(5);
     }
+  });
+});
+
+// =============================================================================
+// Test Gap Detector
+// =============================================================================
+
+describe('test gap detection', () => {
+  it('detects areas with no test tasks', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 5; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, type: 'feature', aggregate: 'payments' }));
+    }
+
+    const result = detectPatterns(makeContext({ tasks, minConfidence: 0 }));
+    const gap = result.patterns.find(p => p.type === 'test_gap');
+    expect(gap).toBeDefined();
+    expect(gap!.data.aggregate).toBe('payments');
+    expect(gap!.data.testTasks).toBe(0);
+    expect(gap!.data.coverage).toBe(0);
+  });
+
+  it('detects areas with low test ratio (< 20%)', () => {
+    const tasks = new Map<string, Task>();
+    // 9 feature tasks + 1 test task = 10% coverage
+    for (let i = 0; i < 9; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, type: 'feature', aggregate: 'api' }));
+    }
+    tasks.set('RALPH-010', makeTask({ id: 'RALPH-010', type: 'test', aggregate: 'api' }));
+
+    const result = detectPatterns(makeContext({ tasks, minConfidence: 0 }));
+    const gap = result.patterns.find(p => p.type === 'test_gap');
+    expect(gap).toBeDefined();
+    expect(gap!.data.coverage).toBeCloseTo(0.1);
+  });
+
+  it('does not detect gap when test ratio >= 20%', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 4; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, type: 'feature', aggregate: 'api' }));
+    }
+    tasks.set('RALPH-005', makeTask({ id: 'RALPH-005', type: 'test', aggregate: 'api' }));
+
+    const result = detectPatterns(makeContext({ tasks }));
+    const gap = result.patterns.find(p => p.type === 'test_gap');
+    expect(gap).toBeUndefined();
+  });
+
+  it('does not detect gap with fewer than 3 non-test tasks', () => {
+    const tasks = new Map<string, Task>();
+    tasks.set('RALPH-001', makeTask({ id: 'RALPH-001', type: 'feature', aggregate: 'small' }));
+    tasks.set('RALPH-002', makeTask({ id: 'RALPH-002', type: 'feature', aggregate: 'small' }));
+
+    const result = detectPatterns(makeContext({ tasks }));
+    const gap = result.patterns.find(p => p.type === 'test_gap');
+    expect(gap).toBeUndefined();
+  });
+
+  it('reports the worst coverage area first', () => {
+    const tasks = new Map<string, Task>();
+    // "api" has 0% coverage (5 features, 0 tests)
+    for (let i = 0; i < 5; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, type: 'feature', aggregate: 'api' }));
+    }
+    // "ui" has ~14% coverage (6 features, 1 test)
+    for (let i = 5; i < 11; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, type: 'feature', aggregate: 'ui' }));
+    }
+    tasks.set('RALPH-012', makeTask({ id: 'RALPH-012', type: 'test', aggregate: 'ui' }));
+
+    const result = detectPatterns(makeContext({ tasks, minConfidence: 0 }));
+    const gap = result.patterns.find(p => p.type === 'test_gap');
+    expect(gap).toBeDefined();
+    expect(gap!.data.aggregate).toBe('api');
+  });
+
+  it('uses domain as fallback when aggregate is missing', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 4; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, type: 'feature', domain: 'billing' }));
+    }
+
+    const result = detectPatterns(makeContext({ tasks, minConfidence: 0 }));
+    const gap = result.patterns.find(p => p.type === 'test_gap');
+    expect(gap).toBeDefined();
+    expect(gap!.data.aggregate).toBe('billing');
+  });
+
+  it('includes suggestion to add test tasks', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 5; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, type: 'feature', aggregate: 'core' }));
+    }
+
+    const result = detectPatterns(makeContext({ tasks, minConfidence: 0 }));
+    const gap = result.patterns.find(p => p.type === 'test_gap');
+    expect(gap).toBeDefined();
+    expect(gap!.suggestion).toContain('test');
+    expect(gap!.suggestion).toContain('core');
+  });
+
+  it('includes evidence with task IDs', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 5; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, type: 'feature', aggregate: 'core' }));
+    }
+
+    const result = detectPatterns(makeContext({ tasks, minConfidence: 0 }));
+    const gap = result.patterns.find(p => p.type === 'test_gap');
+    expect(gap).toBeDefined();
+    expect(gap!.evidence.length).toBeGreaterThan(0);
+    expect(gap!.evidence.length).toBeLessThanOrEqual(5);
+  });
+
+  it('description includes coverage percentage', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 10; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, type: 'feature', aggregate: 'core' }));
+    }
+    tasks.set('RALPH-011', makeTask({ id: 'RALPH-011', type: 'test', aggregate: 'core' }));
+
+    const result = detectPatterns(makeContext({ tasks, minConfidence: 0 }));
+    const gap = result.patterns.find(p => p.type === 'test_gap');
+    expect(gap).toBeDefined();
+    expect(gap!.description).toContain('9%');
+  });
+
+  it('confidence scales with sample size', () => {
+    const tasks3 = new Map<string, Task>();
+    for (let i = 0; i < 3; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks3.set(id, makeTask({ id, type: 'feature', aggregate: 'core' }));
+    }
+
+    const tasks10 = new Map<string, Task>();
+    for (let i = 0; i < 10; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks10.set(id, makeTask({ id, type: 'feature', aggregate: 'core' }));
+    }
+
+    const result3 = detectTestGaps(makeContext({ tasks: tasks3 }));
+    const result10 = detectTestGaps(makeContext({ tasks: tasks10 }));
+    expect(result3).not.toBeNull();
+    expect(result10).not.toBeNull();
+    expect(result10!.confidence).toBeGreaterThan(result3!.confidence);
+  });
+});
+
+// =============================================================================
+// High Churn Detector
+// =============================================================================
+
+describe('high churn detection', () => {
+  it('detects areas with high file change frequency', () => {
+    const metrics: TaskMetrics[] = [];
+    // "api" area: 5 tasks with 20 files each = high churn
+    for (let i = 0; i < 5; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        filesChanged: 20,
+      }));
+    }
+    // "ui" area: 5 tasks with 2 files each = low churn
+    for (let i = 5; i < 10; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'ui',
+        filesChanged: 2,
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics, minConfidence: 0 }));
+    const churn = result.patterns.find(p => p.type === 'high_churn');
+    expect(churn).toBeDefined();
+    expect(churn!.data.aggregate).toBe('api');
+    expect(churn!.data.totalFiles).toBe(100);
+  });
+
+  it('does not detect churn with fewer than minSamples tasks', () => {
+    const metrics: TaskMetrics[] = [
+      makeMetric({ aggregate: 'api', filesChanged: 100 }),
+      makeMetric({ aggregate: 'api', filesChanged: 100 }),
+    ];
+
+    const result = detectPatterns(makeContext({ metrics, minSamples: 5 }));
+    const churn = result.patterns.find(p => p.type === 'high_churn');
+    expect(churn).toBeUndefined();
+  });
+
+  it('does not detect churn when all areas have similar file changes', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 5; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        filesChanged: 5,
+      }));
+    }
+    for (let i = 5; i < 10; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'ui',
+        filesChanged: 5,
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics }));
+    const churn = result.patterns.find(p => p.type === 'high_churn');
+    expect(churn).toBeUndefined();
+  });
+
+  it('skips metrics without filesChanged', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 10; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        filesChanged: undefined,
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics }));
+    const churn = result.patterns.find(p => p.type === 'high_churn');
+    expect(churn).toBeUndefined();
+  });
+
+  it('skips metrics with zero filesChanged', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 10; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        filesChanged: 0,
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics }));
+    const churn = result.patterns.find(p => p.type === 'high_churn');
+    expect(churn).toBeUndefined();
+  });
+
+  it('uses domain as fallback when aggregate is missing', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 5; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        domain: 'billing',
+        filesChanged: 20,
+      }));
+    }
+    for (let i = 5; i < 10; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        domain: 'auth',
+        filesChanged: 2,
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics, minConfidence: 0 }));
+    const churn = result.patterns.find(p => p.type === 'high_churn');
+    expect(churn).toBeDefined();
+    expect(churn!.data.aggregate).toBe('billing');
+  });
+
+  it('includes avgFilesPerTask in data', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 5; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        filesChanged: 10,
+      }));
+    }
+    for (let i = 5; i < 10; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'ui',
+        filesChanged: 1,
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics, minConfidence: 0 }));
+    const churn = result.patterns.find(p => p.type === 'high_churn');
+    expect(churn).toBeDefined();
+    expect(churn!.data.avgFilesPerTask).toBe(10);
+  });
+
+  it('includes suggestion about instability', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 5; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'config',
+        filesChanged: 20,
+      }));
+    }
+    for (let i = 5; i < 10; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'other',
+        filesChanged: 1,
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics, minConfidence: 0 }));
+    const churn = result.patterns.find(p => p.type === 'high_churn');
+    expect(churn).toBeDefined();
+    expect(churn!.suggestion).toContain('config');
+    expect(churn!.suggestion).toContain('instability');
+  });
+
+  it('confidence scales with sample size', () => {
+    const makeChurnMetrics = (count: number) => {
+      const metrics: TaskMetrics[] = [];
+      for (let i = 0; i < count; i++) {
+        metrics.push(makeMetric({
+          taskId: `RALPH-A${String(i + 1).padStart(3, '0')}`,
+          aggregate: 'api',
+          filesChanged: 30,
+        }));
+      }
+      // Large baseline of low-churn tasks to keep overall average low
+      for (let i = 0; i < 20; i++) {
+        metrics.push(makeMetric({
+          taskId: `RALPH-B${String(i + 1).padStart(3, '0')}`,
+          aggregate: 'ui',
+          filesChanged: 1,
+        }));
+      }
+      return metrics;
+    };
+
+    const result5 = detectHighChurn(makeContext({ metrics: makeChurnMetrics(5) }));
+    const result10 = detectHighChurn(makeContext({ metrics: makeChurnMetrics(10) }));
+    expect(result5).not.toBeNull();
+    expect(result10).not.toBeNull();
+    expect(result10!.confidence).toBeGreaterThan(result5!.confidence);
+  });
+});
+
+// =============================================================================
+// Coupling Detector
+// =============================================================================
+
+describe('coupling detection', () => {
+  it('detects coupling between areas that co-change', () => {
+    const metrics: TaskMetrics[] = [];
+    // 4 tasks that touch both "api" and "db"
+    for (let i = 0; i < 4; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        domain: 'db',
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics, minConfidence: 0 }));
+    const coupling = result.patterns.find(p => p.type === 'coupling');
+    expect(coupling).toBeDefined();
+    expect(coupling!.data.coChangeCount).toBe(4);
+  });
+
+  it('does not detect coupling with fewer than 3 co-changes', () => {
+    const metrics: TaskMetrics[] = [
+      makeMetric({ taskId: 'RALPH-001', aggregate: 'api', domain: 'db' }),
+      makeMetric({ taskId: 'RALPH-002', aggregate: 'api', domain: 'db' }),
+    ];
+
+    const result = detectPatterns(makeContext({ metrics }));
+    const coupling = result.patterns.find(p => p.type === 'coupling');
+    expect(coupling).toBeUndefined();
+  });
+
+  it('does not detect coupling when areas are the same', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 5; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        domain: 'api', // same as aggregate, should be ignored
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics }));
+    const coupling = result.patterns.find(p => p.type === 'coupling');
+    expect(coupling).toBeUndefined();
+  });
+
+  it('detects coupling via tags', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 4; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        tags: ['frontend', 'backend'],
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics, minConfidence: 0 }));
+    const coupling = result.patterns.find(p => p.type === 'coupling');
+    expect(coupling).toBeDefined();
+    expect(coupling!.description).toContain('backend');
+    expect(coupling!.description).toContain('frontend');
+  });
+
+  it('reports the most coupled pair first', () => {
+    const metrics: TaskMetrics[] = [];
+    // 5 tasks coupling "api" and "db"
+    for (let i = 0; i < 5; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-A${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        domain: 'db',
+      }));
+    }
+    // 3 tasks coupling "ui" and "state"
+    for (let i = 0; i < 3; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-B${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'ui',
+        domain: 'state',
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics, minConfidence: 0 }));
+    const coupling = result.patterns.find(p => p.type === 'coupling');
+    expect(coupling).toBeDefined();
+    expect(coupling!.data.coChangeCount).toBe(5);
+  });
+
+  it('includes suggestion to decouple', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 4; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'auth',
+        domain: 'users',
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics, minConfidence: 0 }));
+    const coupling = result.patterns.find(p => p.type === 'coupling');
+    expect(coupling).toBeDefined();
+    expect(coupling!.suggestion).toContain('decoupling');
+  });
+
+  it('includes evidence with task IDs', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 4; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        domain: 'db',
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics, minConfidence: 0 }));
+    const coupling = result.patterns.find(p => p.type === 'coupling');
+    expect(coupling).toBeDefined();
+    expect(coupling!.evidence.length).toBeGreaterThan(0);
+    expect(coupling!.evidence.length).toBeLessThanOrEqual(5);
+  });
+
+  it('handles metrics with no areas gracefully', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 5; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        // no aggregate, domain, or tags
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics }));
+    const coupling = result.patterns.find(p => p.type === 'coupling');
+    expect(coupling).toBeUndefined();
+  });
+
+  it('does not double-count tags that match aggregate or domain', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 4; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        domain: 'db',
+        tags: ['api', 'db'], // duplicate of aggregate/domain
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics, minConfidence: 0 }));
+    const coupling = result.patterns.find(p => p.type === 'coupling');
+    expect(coupling).toBeDefined();
+    // Should count exactly 4 co-changes (not inflated by duplicate tags)
+    expect(coupling!.data.coChangeCount).toBe(4);
+  });
+
+  it('confidence scales with co-change count', () => {
+    const result3 = detectCoupling(makeContext({
+      metrics: Array.from({ length: 3 }, (_, i) => makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        domain: 'db',
+      })),
+    }));
+    const result8 = detectCoupling(makeContext({
+      metrics: Array.from({ length: 8 }, (_, i) => makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        domain: 'db',
+      })),
+    }));
+
+    expect(result3).not.toBeNull();
+    expect(result8).not.toBeNull();
+    expect(result8!.confidence).toBeGreaterThan(result3!.confidence);
   });
 });
