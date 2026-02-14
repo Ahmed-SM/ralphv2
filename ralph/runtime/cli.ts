@@ -6,7 +6,7 @@
  */
 
 import { resolve } from 'path';
-import type { RuntimeConfig } from '../types/index.js';
+import type { RuntimeConfig, TrackerRuntimeConfig } from '../types/index.js';
 
 // =============================================================================
 // TYPES
@@ -238,6 +238,132 @@ export async function runStatus(deps: CliDeps): Promise<number> {
   return 0;
 }
 
+/**
+ * Run standalone tracker sync.
+ *
+ * Loads config, resolves tracker auth from env, creates a SyncContext,
+ * and delegates to syncToTracker / syncFromTracker / syncBidirectional.
+ *
+ * Supports --dry-run (read-only) and --task=<id> (filter to one task).
+ */
+export async function runSync(args: ParsedArgs, deps: CliDeps): Promise<number> {
+  deps.log('Running tracker sync...\n');
+
+  const workDir = resolve(deps.cwd);
+  const config = await loadConfig(resolve(workDir, args.configPath), deps.readFile);
+  const trackerCfg = config.tracker;
+
+  if (args.dryRun) deps.log('Mode: DRY RUN (no writes)\n');
+
+  // Load full tracker config from configPath
+  let fullTrackerConfig: Record<string, unknown>;
+  try {
+    const raw = await deps.readFile(resolve(workDir, trackerCfg.configPath), 'utf-8');
+    fullTrackerConfig = JSON.parse(raw);
+  } catch {
+    deps.error(`Failed to read tracker config: ${trackerCfg.configPath}`);
+    deps.error('Create the tracker config file or update ralph.config.json tracker.configPath');
+    return 1;
+  }
+
+  // Resolve auth from environment
+  const { getTrackerAuth } = await deps.importModule('./loop.js') as {
+    getTrackerAuth: (type: string) => { type: string; token: string; email?: string } | null;
+  };
+
+  const auth = getTrackerAuth(trackerCfg.type);
+  if (!auth) {
+    const prefix = trackerCfg.type.toUpperCase().replace(/-/g, '_');
+    deps.error(`Missing tracker credentials. Set RALPH_${prefix}_TOKEN (and RALPH_${prefix}_EMAIL for Jira).`);
+    return 1;
+  }
+
+  // Import sync module and create tracker
+  const syncModule = await deps.importModule('../skills/normalize/index.js') as {
+    createTracker: (config: unknown, auth: unknown) => Promise<unknown>;
+    syncToTracker: (ctx: unknown, opts?: unknown) => Promise<SyncResultShape>;
+    syncFromTracker: (ctx: unknown, opts?: unknown) => Promise<SyncResultShape>;
+    syncBidirectional: (ctx: unknown, opts?: unknown) => Promise<{ push: SyncResultShape; pull: SyncResultShape }>;
+    printSyncSummary: (result: SyncResultShape, direction: string) => void;
+  };
+
+  let tracker: unknown;
+  try {
+    // Load adapter to register factory
+    await deps.importModule(`../integrations/${trackerCfg.type}/adapter.js`).catch(() => {});
+    tracker = await syncModule.createTracker(fullTrackerConfig, auth);
+  } catch (err) {
+    deps.error(`Failed to create tracker: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+
+  const tasksPath = resolve(workDir, 'state/tasks.jsonl');
+
+  const syncContext = {
+    tracker,
+    config: fullTrackerConfig,
+    readFile: (path: string) => deps.readFile(resolve(workDir, path), 'utf-8'),
+    writeFile: args.dryRun
+      ? async () => {} // no-op in dry-run
+      : deps.writeFile
+        ? (path: string, content: string) => deps.writeFile!(resolve(workDir, path), content)
+        : async () => {},
+    tasksPath,
+  };
+
+  const syncOptions: Record<string, unknown> = {};
+  if (args.taskFilter) syncOptions.taskIds = [args.taskFilter];
+  if (args.dryRun) syncOptions.dryRun = true;
+
+  // Determine direction: push by default, pull if tracker→Ralph is needed
+  // For standalone CLI, we do bidirectional sync (pull first, then push)
+  try {
+    const { push, pull } = await syncModule.syncBidirectional(syncContext, syncOptions);
+
+    deps.log('');
+    printSyncResult(deps, pull, 'pull');
+    printSyncResult(deps, push, 'push');
+
+    const totalErrors = push.errors.length + pull.errors.length;
+    if (totalErrors > 0) {
+      deps.log(`\n${totalErrors} error(s) encountered during sync.`);
+    }
+
+    deps.log('Sync complete.');
+    return totalErrors > 0 ? 1 : 0;
+  } catch (err) {
+    deps.error(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+}
+
+interface SyncResultShape {
+  processed: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: Array<{ taskId: string; error: string }>;
+  duration: number;
+}
+
+function printSyncResult(deps: CliDeps, result: SyncResultShape, direction: string): void {
+  deps.log(`--- ${direction.toUpperCase()} ---`);
+  deps.log(`  Processed: ${result.processed}`);
+  deps.log(`  Created:   ${result.created}`);
+  deps.log(`  Updated:   ${result.updated}`);
+  deps.log(`  Skipped:   ${result.skipped}`);
+  deps.log(`  Errors:    ${result.errors.length}`);
+  deps.log(`  Duration:  ${(result.duration / 1000).toFixed(1)}s`);
+
+  if (result.errors.length > 0) {
+    deps.log('  Errors:');
+    for (const err of result.errors) {
+      deps.log(`    - ${err.taskId}: ${err.error}`);
+    }
+  }
+  deps.log('');
+}
+
 // =============================================================================
 // HELPERS
 // =============================================================================
@@ -291,9 +417,7 @@ export async function dispatch(argv: string[], deps: CliDeps): Promise<number> {
       return runStatus(deps);
 
     case 'sync':
-      deps.log('Tracker sync mode');
-      deps.log('Use: npm run sync');
-      return 0;
+      return runSync(args, deps);
 
     case 'learn':
       deps.log('Learning mode');

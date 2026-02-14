@@ -7,6 +7,7 @@ import {
   runMain,
   runDiscover,
   runStatus,
+  runSync,
   loadConfig,
   HELP_TEXT,
   BANNER,
@@ -282,11 +283,17 @@ describe('dispatch', () => {
     expect(deps.log).toHaveBeenCalledWith(HELP_TEXT);
   });
 
-  it('returns 0 for sync command (stub)', async () => {
-    const deps = makeDeps();
+  it('dispatches sync command to runSync', async () => {
+    const mockGetTrackerAuth = vi.fn().mockReturnValue(null);
+    const deps = makeDeps({
+      readFile: vi.fn().mockResolvedValue(MINIMAL_CONFIG),
+      importModule: vi.fn().mockResolvedValue({ getTrackerAuth: mockGetTrackerAuth }),
+    });
     const code = await dispatch(['sync'], deps);
-    expect(code).toBe(0);
-    expect(deps.log).toHaveBeenCalledWith('Tracker sync mode');
+    // Returns 1 because no credentials are set
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('Missing tracker credentials');
   });
 
   it('returns 0 for learn command (stub)', async () => {
@@ -642,5 +649,301 @@ describe('dispatch integration', () => {
     expect(config.loop.dryRun).toBe(true);
     expect(config.loop.taskFilter).toBe('RALPH-001');
     expect(config.loop.maxTasksPerRun).toBe(1);
+  });
+});
+
+// =============================================================================
+// runSync
+// =============================================================================
+
+const TRACKER_CONFIG_JSON = JSON.stringify({
+  type: 'jira',
+  baseUrl: 'https://example.atlassian.net',
+  project: 'RALPH',
+  issueTypeMap: { task: 'Task', bug: 'Bug', epic: 'Epic', feature: 'Story', subtask: 'Sub-task' },
+  statusMap: { discovered: 'Backlog', pending: 'To Do', in_progress: 'In Progress', done: 'Done', cancelled: 'Cancelled', blocked: 'Blocked', review: 'In Review' },
+  autoCreate: true,
+  autoTransition: true,
+  autoComment: true,
+});
+
+function makeSyncDeps(overrides: {
+  getTrackerAuth?: ReturnType<typeof vi.fn>;
+  createTracker?: ReturnType<typeof vi.fn>;
+  syncBidirectional?: ReturnType<typeof vi.fn>;
+  trackerConfigContent?: string;
+  adapterImport?: ReturnType<typeof vi.fn>;
+} = {}): CliDeps {
+  const mockGetTrackerAuth = overrides.getTrackerAuth ?? vi.fn().mockReturnValue({ type: 'token', token: 'tok-123', email: 'test@example.com' });
+  const mockCreateTracker = overrides.createTracker ?? vi.fn().mockResolvedValue({ name: 'jira' });
+  const mockSyncBidirectional = overrides.syncBidirectional ?? vi.fn().mockResolvedValue({
+    push: { processed: 2, created: 1, updated: 0, skipped: 1, errors: [], duration: 500 },
+    pull: { processed: 1, created: 0, updated: 1, skipped: 0, errors: [], duration: 300 },
+  });
+
+  const readFile = vi.fn().mockImplementation(async (path: string) => {
+    if (path.endsWith('ralph.config.json')) return MINIMAL_CONFIG;
+    if (path.endsWith('config.json')) return overrides.trackerConfigContent ?? TRACKER_CONFIG_JSON;
+    throw new Error(`Unexpected read: ${path}`);
+  });
+
+  const importModule = vi.fn().mockImplementation(async (specifier: string) => {
+    if (specifier === './loop.js') return { getTrackerAuth: mockGetTrackerAuth };
+    if (specifier === '../skills/normalize/index.js') return {
+      createTracker: mockCreateTracker,
+      syncToTracker: vi.fn(),
+      syncFromTracker: vi.fn(),
+      syncBidirectional: mockSyncBidirectional,
+      printSyncSummary: vi.fn(),
+    };
+    if (specifier.includes('/adapter.js')) {
+      if (overrides.adapterImport) return overrides.adapterImport();
+      return {};
+    }
+    throw new Error(`Unexpected import: ${specifier}`);
+  });
+
+  return makeDeps({ readFile, importModule });
+}
+
+describe('runSync', () => {
+  it('logs sync header', async () => {
+    const deps = makeSyncDeps();
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runSync(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Running tracker sync...');
+  });
+
+  it('returns 1 when tracker config file is missing', async () => {
+    const readFile = vi.fn().mockImplementation(async (path: string) => {
+      if (path.endsWith('ralph.config.json')) return MINIMAL_CONFIG;
+      throw new Error('ENOENT');
+    });
+    const deps = makeDeps({ readFile });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runSync(args, deps);
+
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('Failed to read tracker config');
+  });
+
+  it('returns 1 when credentials are missing', async () => {
+    const mockGetTrackerAuth = vi.fn().mockReturnValue(null);
+    const deps = makeSyncDeps({ getTrackerAuth: mockGetTrackerAuth });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runSync(args, deps);
+
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('Missing tracker credentials');
+    expect(errMsgs).toContain('RALPH_JIRA_TOKEN');
+  });
+
+  it('returns 1 when tracker creation fails', async () => {
+    const mockCreateTracker = vi.fn().mockRejectedValue(new Error('No factory registered'));
+    const deps = makeSyncDeps({ createTracker: mockCreateTracker });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runSync(args, deps);
+
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('Failed to create tracker');
+  });
+
+  it('performs bidirectional sync and returns 0 on success', async () => {
+    const mockSyncBidirectional = vi.fn().mockResolvedValue({
+      push: { processed: 3, created: 2, updated: 0, skipped: 1, errors: [], duration: 800 },
+      pull: { processed: 1, created: 0, updated: 1, skipped: 0, errors: [], duration: 200 },
+    });
+    const deps = makeSyncDeps({ syncBidirectional: mockSyncBidirectional });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runSync(args, deps);
+
+    expect(code).toBe(0);
+    expect(mockSyncBidirectional).toHaveBeenCalledTimes(1);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('PULL');
+    expect(logged).toContain('PUSH');
+    expect(logged).toContain('Sync complete');
+  });
+
+  it('returns 1 when sync has errors', async () => {
+    const mockSyncBidirectional = vi.fn().mockResolvedValue({
+      push: { processed: 1, created: 0, updated: 0, skipped: 0, errors: [{ taskId: 'R-001', error: 'API error' }], duration: 100 },
+      pull: { processed: 0, created: 0, updated: 0, skipped: 0, errors: [], duration: 50 },
+    });
+    const deps = makeSyncDeps({ syncBidirectional: mockSyncBidirectional });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runSync(args, deps);
+
+    expect(code).toBe(1);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('1 error(s)');
+  });
+
+  it('displays sync errors in output', async () => {
+    const mockSyncBidirectional = vi.fn().mockResolvedValue({
+      push: { processed: 1, created: 0, updated: 0, skipped: 0, errors: [{ taskId: 'R-001', error: 'Connection refused' }], duration: 100 },
+      pull: { processed: 0, created: 0, updated: 0, skipped: 0, errors: [], duration: 50 },
+    });
+    const deps = makeSyncDeps({ syncBidirectional: mockSyncBidirectional });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runSync(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('R-001');
+    expect(logged).toContain('Connection refused');
+  });
+
+  it('passes --task filter as taskIds option', async () => {
+    const mockSyncBidirectional = vi.fn().mockResolvedValue({
+      push: { processed: 1, created: 1, updated: 0, skipped: 0, errors: [], duration: 100 },
+      pull: { processed: 0, created: 0, updated: 0, skipped: 0, errors: [], duration: 50 },
+    });
+    const deps = makeSyncDeps({ syncBidirectional: mockSyncBidirectional });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: 'RALPH-042' };
+
+    await runSync(args, deps);
+
+    const opts = mockSyncBidirectional.mock.calls[0][1];
+    expect(opts.taskIds).toEqual(['RALPH-042']);
+  });
+
+  it('passes --dry-run option to sync', async () => {
+    const mockSyncBidirectional = vi.fn().mockResolvedValue({
+      push: { processed: 0, created: 0, updated: 0, skipped: 0, errors: [], duration: 0 },
+      pull: { processed: 0, created: 0, updated: 0, skipped: 0, errors: [], duration: 0 },
+    });
+    const deps = makeSyncDeps({ syncBidirectional: mockSyncBidirectional });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: true, taskFilter: undefined };
+
+    await runSync(args, deps);
+
+    const opts = mockSyncBidirectional.mock.calls[0][1];
+    expect(opts.dryRun).toBe(true);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('DRY RUN');
+  });
+
+  it('resolves tracker auth via getTrackerAuth', async () => {
+    const mockGetTrackerAuth = vi.fn().mockReturnValue({ type: 'token', token: 'my-token' });
+    const deps = makeSyncDeps({ getTrackerAuth: mockGetTrackerAuth });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runSync(args, deps);
+
+    expect(mockGetTrackerAuth).toHaveBeenCalledWith('jira');
+  });
+
+  it('creates tracker with parsed config and auth', async () => {
+    const mockCreateTracker = vi.fn().mockResolvedValue({ name: 'jira' });
+    const deps = makeSyncDeps({ createTracker: mockCreateTracker });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runSync(args, deps);
+
+    expect(mockCreateTracker).toHaveBeenCalledTimes(1);
+    const [config, auth] = mockCreateTracker.mock.calls[0];
+    expect(config.type).toBe('jira');
+    expect(auth.token).toBe('tok-123');
+  });
+
+  it('returns 1 when syncBidirectional throws', async () => {
+    const mockSyncBidirectional = vi.fn().mockRejectedValue(new Error('Network timeout'));
+    const deps = makeSyncDeps({ syncBidirectional: mockSyncBidirectional });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runSync(args, deps);
+
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('Sync failed');
+    expect(errMsgs).toContain('Network timeout');
+  });
+
+  it('gracefully handles adapter import failure', async () => {
+    const adapterImport = vi.fn().mockRejectedValue(new Error('Module not found'));
+    const deps = makeSyncDeps({ adapterImport });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    // Should not throw — adapter import is caught
+    const code = await runSync(args, deps);
+
+    expect(code).toBe(0);
+  });
+
+  it('prints pull and push summary with durations', async () => {
+    const mockSyncBidirectional = vi.fn().mockResolvedValue({
+      push: { processed: 5, created: 3, updated: 1, skipped: 1, errors: [], duration: 1234 },
+      pull: { processed: 2, created: 0, updated: 2, skipped: 0, errors: [], duration: 567 },
+    });
+    const deps = makeSyncDeps({ syncBidirectional: mockSyncBidirectional });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runSync(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Processed: 5');
+    expect(logged).toContain('Created:   3');
+    expect(logged).toContain('Updated:   2');
+    expect(logged).toContain('1.2s');
+    expect(logged).toContain('0.6s');
+  });
+
+  it('combines --task and --dry-run options', async () => {
+    const mockSyncBidirectional = vi.fn().mockResolvedValue({
+      push: { processed: 1, created: 0, updated: 0, skipped: 1, errors: [], duration: 50 },
+      pull: { processed: 0, created: 0, updated: 0, skipped: 0, errors: [], duration: 20 },
+    });
+    const deps = makeSyncDeps({ syncBidirectional: mockSyncBidirectional });
+    const args: ParsedArgs = { command: 'sync', configPath: DEFAULT_CONFIG_PATH, dryRun: true, taskFilter: 'RALPH-007' };
+
+    const code = await runSync(args, deps);
+
+    expect(code).toBe(0);
+    const opts = mockSyncBidirectional.mock.calls[0][1];
+    expect(opts.taskIds).toEqual(['RALPH-007']);
+    expect(opts.dryRun).toBe(true);
+  });
+
+  it('works via dispatch', async () => {
+    const mockSyncBidirectional = vi.fn().mockResolvedValue({
+      push: { processed: 0, created: 0, updated: 0, skipped: 0, errors: [], duration: 0 },
+      pull: { processed: 0, created: 0, updated: 0, skipped: 0, errors: [], duration: 0 },
+    });
+    const mockGetTrackerAuth = vi.fn().mockReturnValue({ type: 'token', token: 'tok-123' });
+    const mockCreateTracker = vi.fn().mockResolvedValue({ name: 'jira' });
+
+    const readFile = vi.fn().mockImplementation(async (path: string) => {
+      if (path.endsWith('ralph.config.json')) return MINIMAL_CONFIG;
+      if (path.endsWith('config.json')) return TRACKER_CONFIG_JSON;
+      throw new Error(`Unexpected: ${path}`);
+    });
+
+    const importModule = vi.fn().mockImplementation(async (specifier: string) => {
+      if (specifier === './loop.js') return { getTrackerAuth: mockGetTrackerAuth };
+      if (specifier === '../skills/normalize/index.js') return {
+        createTracker: mockCreateTracker,
+        syncBidirectional: mockSyncBidirectional,
+      };
+      if (specifier.includes('/adapter.js')) return {};
+      throw new Error(`Unexpected import: ${specifier}`);
+    });
+
+    const deps = makeDeps({ readFile, importModule });
+    const code = await dispatch(['sync'], deps);
+
+    expect(code).toBe(0);
+    expect(mockSyncBidirectional).toHaveBeenCalledTimes(1);
   });
 });

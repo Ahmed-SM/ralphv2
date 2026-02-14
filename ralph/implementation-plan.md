@@ -456,9 +456,28 @@ Next steps for production readiness:
 7. ~~Loop hooks / observability~~ ✅ Done
 8. ~~Task schema validation~~ ✅ Done
 9. ~~Git watcher integration in main loop~~ ✅ Done
-10. Live testing with Jira credentials
-11. Live testing with actual git repository
-12. Live testing with Linear API key
+10. ~~Standalone sync CLI command~~ ✅ Done
+11. Live testing with Jira credentials
+12. Live testing with actual git repository
+13. Live testing with Linear API key
+14. Standalone learn CLI command
+
+### Standalone Sync CLI Command (Phase 31) ✅ COMPLETE
+- [x] Implemented `runSync()` in runtime/cli.ts — standalone `ralph sync` command
+- [x] Loads ralph.config.json and tracker config from configPath
+- [x] Resolves tracker auth from env via `getTrackerAuth()` (reuses loop.ts function)
+- [x] Dynamically imports tracker adapter for factory registration
+- [x] Performs bidirectional sync (pull first, then push) via `syncBidirectional()`
+- [x] Supports `--dry-run` (no writes, logs mode)
+- [x] Supports `--task=<id>` (filters sync to single task via taskIds option)
+- [x] Prints structured pull/push summary (processed/created/updated/skipped/errors/duration)
+- [x] Returns exit code 1 on errors (missing config, missing creds, sync errors, tracker creation failure)
+- [x] Graceful adapter import failure handling (caught, doesn't crash)
+- [x] Wired into `dispatch()` (replaces stub)
+- [x] Unit tests — 16 tests → [runtime/cli.test.ts](./runtime/cli.test.ts)
+  - runSync — 14 tests (header logging, missing tracker config, missing credentials, tracker creation failure, bidirectional success, sync errors exit code, error display, task filter passthrough, dry-run passthrough, auth resolution, tracker creation args, syncBidirectional throws, adapter import failure, summary with durations)
+  - dispatch integration — 2 tests (sync via dispatch with creds, sync combined flags)
+- [x] Total: 16 new tests (1306 total across 34 test files)
 
 ## Dependencies
 
