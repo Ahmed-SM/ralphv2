@@ -7,6 +7,7 @@
     "maxIterationsPerTask": 10,
     "maxTimePerTask": 1800000,
     "maxCostPerTask": 5,
+    "maxCostPerRun": 50,
     "maxTasksPerRun": 50,
     "maxTimePerRun": 14400000,
     "onFailure": "continue",

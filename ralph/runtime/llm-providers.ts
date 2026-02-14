@@ -13,6 +13,7 @@ import type {
   LLMTool,
   LLMResponse,
   LLMToolCall,
+  LLMUsage,
   LLMConfig,
 } from '../types/index.js';
 
@@ -175,7 +176,11 @@ export function parseAnthropicResponse(data: AnthropicResponse): LLMResponse {
 
   const finishReason = mapAnthropicStopReason(data.stop_reason);
 
-  return { content, toolCalls, finishReason };
+  const usage: LLMUsage | undefined = data.usage
+    ? { inputTokens: data.usage.input_tokens, outputTokens: data.usage.output_tokens }
+    : undefined;
+
+  return { content, toolCalls, finishReason, usage };
 }
 
 /**
@@ -357,7 +362,11 @@ export function parseOpenAIResponse(data: OpenAIResponse): LLMResponse {
 
   const finishReason = mapOpenAIFinishReason(choice.finish_reason);
 
-  return { content, toolCalls, finishReason };
+  const usage: LLMUsage | undefined = data.usage
+    ? { inputTokens: data.usage.prompt_tokens, outputTokens: data.usage.completion_tokens }
+    : undefined;
+
+  return { content, toolCalls, finishReason, usage };
 }
 
 /**

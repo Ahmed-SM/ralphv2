@@ -1058,3 +1058,92 @@ describe('createProvider', () => {
     }
   });
 });
+
+// =============================================================================
+// USAGE PARSING TESTS
+// =============================================================================
+
+describe('parseAnthropicResponse usage', () => {
+  it('extracts usage from Anthropic response', () => {
+    const data = {
+      id: 'msg-u1',
+      type: 'message' as const,
+      role: 'assistant' as const,
+      content: [{ type: 'text' as const, text: 'Hello' }],
+      stop_reason: 'end_turn' as const,
+      usage: { input_tokens: 123, output_tokens: 456 },
+    };
+    const result = parseAnthropicResponse(data);
+    expect(result.usage).toEqual({ inputTokens: 123, outputTokens: 456 });
+  });
+
+  it('returns undefined usage when usage field is missing', () => {
+    const data = {
+      id: 'msg-u2',
+      type: 'message' as const,
+      role: 'assistant' as const,
+      content: [{ type: 'text' as const, text: 'No usage' }],
+      stop_reason: 'end_turn' as const,
+    } as any;
+    const result = parseAnthropicResponse(data);
+    expect(result.usage).toBeUndefined();
+  });
+
+  it('propagates usage through AnthropicProvider.chat()', async () => {
+    const mockFetch = makeMockFetch({
+      id: 'msg-u3',
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Test' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 99, output_tokens: 77 },
+    });
+    const provider = new AnthropicProvider(makeConfig(), mockFetch);
+    const result = await provider.chat([{ role: 'user', content: 'hi' }]);
+    expect(result.usage).toEqual({ inputTokens: 99, outputTokens: 77 });
+  });
+});
+
+describe('parseOpenAIResponse usage', () => {
+  it('extracts usage from OpenAI response', () => {
+    const data = {
+      id: 'chatcmpl-u1',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant' as const, content: 'Hello' },
+        finish_reason: 'stop' as const,
+      }],
+      usage: { prompt_tokens: 200, completion_tokens: 300, total_tokens: 500 },
+    };
+    const result = parseOpenAIResponse(data);
+    expect(result.usage).toEqual({ inputTokens: 200, outputTokens: 300 });
+  });
+
+  it('returns undefined usage when usage field is missing', () => {
+    const data = {
+      id: 'chatcmpl-u2',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant' as const, content: 'No usage' },
+        finish_reason: 'stop' as const,
+      }],
+    } as any;
+    const result = parseOpenAIResponse(data);
+    expect(result.usage).toBeUndefined();
+  });
+
+  it('propagates usage through OpenAIProvider.chat()', async () => {
+    const mockFetch = makeMockFetch({
+      id: 'chatcmpl-u3',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: 'Test' },
+        finish_reason: 'stop',
+      }],
+      usage: { prompt_tokens: 55, completion_tokens: 33, total_tokens: 88 },
+    });
+    const provider = new OpenAIProvider(makeConfig({ provider: 'openai' }), mockFetch);
+    const result = await provider.chat([{ role: 'user', content: 'hi' }]);
+    expect(result.usage).toEqual({ inputTokens: 55, outputTokens: 33 });
+  });
+});

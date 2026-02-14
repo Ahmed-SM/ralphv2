@@ -18,6 +18,7 @@ import type {
   LLMTool,
   LLMToolCall,
   LLMResponse,
+  LLMUsage,
   LLMConfig,
 } from '../types/index.js';
 import type { Executor } from './executor.js';
@@ -399,7 +400,7 @@ export async function executeLLMIteration(
     previousResult?: string;
     conversationHistory?: LLMMessage[];
   } = {},
-): Promise<{ result: IterationResult; actions: Action[] }> {
+): Promise<{ result: IterationResult; actions: Action[]; usage?: LLMUsage }> {
   const systemPrompt = buildSystemPrompt();
   const userPrompt = buildIterationPrompt(
     task,
@@ -434,7 +435,7 @@ export async function executeLLMIteration(
   // Interpret result
   const result = interpretResponse(response, executedToolCalls);
 
-  return { result, actions };
+  return { result, actions, usage: response.usage };
 }
 
 // =============================================================================

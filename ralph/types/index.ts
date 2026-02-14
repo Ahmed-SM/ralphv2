@@ -262,6 +262,7 @@ export interface LoopConfig {
   maxTimePerTask: number;
   maxCostPerTask: number;
   maxTasksPerRun: number;
+  maxCostPerRun: number;
   maxTimePerRun: number;
   onFailure: 'stop' | 'continue' | 'retry';
   parallelism: number;
@@ -346,10 +347,16 @@ export interface LLMToolCall {
   arguments: Record<string, unknown>;
 }
 
+export interface LLMUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface LLMResponse {
   content: string;
   toolCalls: LLMToolCall[];
   finishReason: 'stop' | 'tool_calls' | 'length' | 'error';
+  usage?: LLMUsage;
 }
 
 export interface LLMTool {
@@ -370,6 +377,8 @@ export interface LLMConfig {
   baseUrl?: string;
   maxTokens: number;
   temperature: number;
+  costPerInputToken?: number;
+  costPerOutputToken?: number;
 }
 
 // =============================================================================

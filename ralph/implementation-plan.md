@@ -298,14 +298,35 @@ Ralph v1 MVP is now functional with:
 - [x] Unit tests — 15 tests (5 dry-run: skip git commit, skip tracker sync, still execute iterations, still record learning, default false; 10 taskFilter: pick specific task, no match returns null, done/cancelled returns null, blocked task picked when targeted, in_progress/discovered targeted, normal selection without filter, state derivation before filter, empty tasks returns null)
 - [x] Total: 15 new tests (1005 total across 29 test files)
 
+### LLM Cost Tracking & Budget Enforcement (Phase 24) ✅ COMPLETE
+- [x] Added `LLMUsage` type (inputTokens, outputTokens) to types/index.ts
+- [x] Added `usage?: LLMUsage` to `LLMResponse` — providers now return token counts
+- [x] Added `maxCostPerRun` to `LoopConfig` — spec-aligned global cost limit ($50 default)
+- [x] Added `costPerInputToken`, `costPerOutputToken` to `LLMConfig` — configurable per-token rates
+- [x] Implemented `estimateCost()` — computes USD cost from token usage with configurable rates
+- [x] Updated `parseAnthropicResponse()` — extracts usage from Anthropic API response
+- [x] Updated `parseOpenAIResponse()` — extracts usage from OpenAI API response
+- [x] Updated `executeLLMIteration()` — returns `usage` alongside result and actions
+- [x] Updated `executeIteration()` — propagates usage from LLM path
+- [x] Updated `executeTaskLoop()` — accumulates per-task cost, enforces `maxCostPerTask` limit
+- [x] Updated `executeTaskLoop()` — checks `maxCostPerRun` via `runCostSoFar` parameter
+- [x] Updated `runLoop()` — tracks `totalCost` across tasks, stops on run cost limit
+- [x] Added `totalCost` to `LoopResult` — observable cost reporting
+- [x] Added `cost` and `taskCostSoFar` to progress.jsonl iteration events
+- [x] Updated ralph.config.json — added `maxCostPerRun: 50`
+- [x] Exported `estimateCost` from runtime/index.ts
+- [x] Unit tests — 21 tests (6 estimateCost: undefined/defaults/custom/fallback/zero/large; 6 executeTaskLoop cost: no-LLM/accumulate/task-limit/run-limit/progress-log/heuristic; 3 usage parsing: Anthropic/OpenAI/executeLLMIteration; 3 Anthropic usage: extract/missing/propagate; 3 OpenAI usage: extract/missing/propagate)
+- [x] Total: 21 new tests (1026 total across 29 test files)
+
 Next steps for production readiness:
 1. ~~Add LLM integration for intelligent task execution~~ ✅ Done
 2. ~~Implement concrete LLM API client (Anthropic/OpenAI HTTP adapter)~~ ✅ Done
 3. ~~Sandbox rollback on task failure~~ ✅ Done
 4. ~~CLI --dry-run and --task flags~~ ✅ Done
-5. Live testing with Jira credentials
-6. Live testing with actual git repository
-7. Live testing with Linear API key
+5. ~~LLM cost tracking & budget enforcement~~ ✅ Done
+6. Live testing with Jira credentials
+7. Live testing with actual git repository
+8. Live testing with Linear API key
 
 ## Dependencies
 

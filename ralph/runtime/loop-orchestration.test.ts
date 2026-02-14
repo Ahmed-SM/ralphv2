@@ -6,15 +6,17 @@ import {
   executeIteration,
   updateTaskStatus,
   recordTaskCompletion,
+  runLearningAnalysis,
   syncTaskToTracker,
   getTrackerAuth,
+  estimateCost,
   readJsonl,
   appendJsonl,
   type LoopContext,
 } from './loop.js';
 import type { Executor } from './executor.js';
 import { GitOperations } from './executor.js';
-import type { Task, TaskOperation, RuntimeConfig } from '../types/index.js';
+import type { Task, TaskOperation, RuntimeConfig, LLMUsage, LLMConfig } from '../types/index.js';
 import { registerTracker } from '../skills/normalize/tracker-interface.js';
 import type { Tracker, TrackerConfig, AuthConfig } from '../skills/normalize/tracker-interface.js';
 
@@ -43,6 +45,7 @@ function makeConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
       maxIterationsPerTask: 10,
       maxTimePerTask: 60000,
       maxCostPerTask: 10,
+      maxCostPerRun: 100,
       maxTasksPerRun: 50,
       maxTimePerRun: 300000,
       onFailure: 'continue',
@@ -1817,6 +1820,279 @@ describe('taskFilter (--task flag)', () => {
 
     const task = await pickNextTask(context, 'T-1');
     expect(task).toBeNull();
+  });
+});
+
+// =============================================================================
+// estimateCost TESTS
+// =============================================================================
+
+describe('estimateCost', () => {
+  it('returns 0 when usage is undefined', () => {
+    expect(estimateCost(undefined)).toBe(0);
+  });
+
+  it('computes cost using default rates when no LLM config', () => {
+    const usage: LLMUsage = { inputTokens: 1000, outputTokens: 500 };
+    const cost = estimateCost(usage);
+    // Default: $3/1M input + $15/1M output
+    // 1000 * 0.000003 + 500 * 0.000015 = 0.003 + 0.0075 = 0.0105
+    expect(cost).toBeCloseTo(0.0105, 6);
+  });
+
+  it('uses custom rates from LLM config', () => {
+    const usage: LLMUsage = { inputTokens: 2000, outputTokens: 1000 };
+    const llmConfig: LLMConfig = {
+      enabled: true,
+      provider: 'anthropic',
+      model: 'test',
+      maxTokens: 4096,
+      temperature: 0,
+      costPerInputToken: 0.00001,
+      costPerOutputToken: 0.00003,
+    };
+    const cost = estimateCost(usage, llmConfig);
+    // 2000 * 0.00001 + 1000 * 0.00003 = 0.02 + 0.03 = 0.05
+    expect(cost).toBeCloseTo(0.05, 6);
+  });
+
+  it('falls back to defaults when config has no rates', () => {
+    const usage: LLMUsage = { inputTokens: 100, outputTokens: 100 };
+    const llmConfig: LLMConfig = {
+      enabled: true,
+      provider: 'openai',
+      model: 'gpt-4o',
+      maxTokens: 4096,
+      temperature: 0,
+    };
+    const cost = estimateCost(usage, llmConfig);
+    // 100 * 0.000003 + 100 * 0.000015 = 0.0003 + 0.0015 = 0.0018
+    expect(cost).toBeCloseTo(0.0018, 6);
+  });
+
+  it('handles zero tokens', () => {
+    const usage: LLMUsage = { inputTokens: 0, outputTokens: 0 };
+    expect(estimateCost(usage)).toBe(0);
+  });
+
+  it('handles large token counts', () => {
+    const usage: LLMUsage = { inputTokens: 1_000_000, outputTokens: 500_000 };
+    const cost = estimateCost(usage);
+    // 1M * $3/1M + 500K * $15/1M = $3 + $7.5 = $10.5
+    expect(cost).toBeCloseTo(10.5, 2);
+  });
+});
+
+// =============================================================================
+// executeTaskLoop COST TRACKING TESTS
+// =============================================================================
+
+describe('executeTaskLoop cost tracking', () => {
+  it('returns cost: 0 when no LLM provider is used', async () => {
+    const task = makeTask({ spec: './specs/exists.md' });
+    const executor = makeMockExecutor({
+      './specs/exists.md': '# Spec content',
+      './state/tasks.jsonl': '',
+    });
+    const context = makeContext({ executor });
+
+    const result = await executeTaskLoop(context, task);
+    expect(result.cost).toBe(0);
+    expect(result.success).toBe(true);
+  });
+
+  it('accumulates cost across iterations with LLM provider', async () => {
+    const task = makeTask({ status: 'pending' });
+    let callCount = 0;
+    const mockProvider = {
+      chat: vi.fn(async () => {
+        callCount++;
+        if (callCount === 3) {
+          return {
+            content: '',
+            toolCalls: [{ name: 'task_complete', arguments: { artifacts: ['out.ts'] } }],
+            finishReason: 'tool_calls' as const,
+            usage: { inputTokens: 100, outputTokens: 50 },
+          };
+        }
+        return {
+          content: 'working...',
+          toolCalls: [],
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 100, outputTokens: 50 },
+        };
+      }),
+    };
+
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': '',
+      './state/progress.jsonl': '',
+    });
+    const context = makeContext({ executor, llmProvider: mockProvider });
+
+    const result = await executeTaskLoop(context, task);
+    expect(result.success).toBe(true);
+    expect(result.iterations).toBe(3);
+    // Each iteration: 100 * 0.000003 + 50 * 0.000015 = 0.00105
+    // 3 iterations: 0.00315
+    expect(result.cost).toBeCloseTo(0.00315, 6);
+  });
+
+  it('stops when per-task cost limit is reached', async () => {
+    const task = makeTask({ status: 'pending' });
+    const mockProvider = {
+      chat: vi.fn(async () => ({
+        content: 'working...',
+        toolCalls: [],
+        finishReason: 'stop' as const,
+        usage: { inputTokens: 100_000, outputTokens: 100_000 },
+      })),
+    };
+
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': '',
+      './state/progress.jsonl': '',
+    });
+    const config = makeConfig({
+      loop: {
+        ...makeConfig().loop,
+        maxCostPerTask: 0.01, // Very low limit
+      },
+    });
+    const context = makeContext({ executor, config, llmProvider: mockProvider });
+
+    const result = await executeTaskLoop(context, task);
+    expect(result.success).toBe(false);
+    expect(result.reason).toContain('Task cost limit exceeded');
+    expect(result.cost).toBeGreaterThan(0);
+  });
+
+  it('stops when per-run cost limit is reached via runCostSoFar', async () => {
+    const task = makeTask({ status: 'pending' });
+    const mockProvider = {
+      chat: vi.fn(async () => ({
+        content: 'working...',
+        toolCalls: [],
+        finishReason: 'stop' as const,
+        usage: { inputTokens: 10_000, outputTokens: 10_000 },
+      })),
+    };
+
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': '',
+      './state/progress.jsonl': '',
+    });
+    const config = makeConfig({
+      loop: {
+        ...makeConfig().loop,
+        maxCostPerRun: 1.0,
+      },
+    });
+    const context = makeContext({ executor, config, llmProvider: mockProvider });
+
+    // Pass high runCostSoFar so the limit is immediately triggered
+    const result = await executeTaskLoop(context, task, 0.999);
+    expect(result.success).toBe(false);
+    expect(result.reason).toContain('Run cost limit exceeded');
+  });
+
+  it('logs cost in progress.jsonl per iteration', async () => {
+    const task = makeTask({ spec: './specs/t.md' });
+    let callCount = 0;
+    const mockProvider = {
+      chat: vi.fn(async () => {
+        callCount++;
+        return {
+          content: '',
+          toolCalls: [{ name: 'task_complete', arguments: { artifacts: ['t.md'] } }],
+          finishReason: 'tool_calls' as const,
+          usage: { inputTokens: 500, outputTokens: 200 },
+        };
+      }),
+    };
+
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': '',
+      './state/progress.jsonl': '',
+    }) as Executor & { _fs: Map<string, string> };
+    const context = makeContext({ executor, llmProvider: mockProvider });
+
+    await executeTaskLoop(context, task);
+
+    const progressContent = executor._fs.get('./state/progress.jsonl') || '';
+    const events = progressContent.trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+    const iterationEvent = events.find((e: Record<string, unknown>) => e.type === 'iteration');
+    expect(iterationEvent).toBeDefined();
+    expect(iterationEvent.cost).toBeGreaterThan(0);
+    expect(iterationEvent.taskCostSoFar).toBeGreaterThan(0);
+  });
+
+  it('cost is 0 for heuristic iterations (no LLM)', async () => {
+    const task = makeTask({
+      status: 'pending',
+      spec: './specs/done.md',
+    });
+    const executor = makeMockExecutor({
+      './specs/done.md': '# Done',
+      './state/tasks.jsonl': '',
+      './state/progress.jsonl': '',
+    });
+    const context = makeContext({ executor });
+
+    const result = await executeTaskLoop(context, task);
+    expect(result.cost).toBe(0);
+    expect(result.success).toBe(true);
+  });
+});
+
+// =============================================================================
+// parseAnthropicResponse / parseOpenAIResponse USAGE TESTS
+// =============================================================================
+
+describe('LLM response usage parsing', () => {
+  it('parseAnthropicResponse includes usage', async () => {
+    const { parseAnthropicResponse } = await import('./llm-providers.js');
+    const data = {
+      id: 'msg-1',
+      type: 'message' as const,
+      role: 'assistant' as const,
+      content: [{ type: 'text' as const, text: 'Hello' }],
+      stop_reason: 'end_turn' as const,
+      usage: { input_tokens: 42, output_tokens: 17 },
+    };
+    const result = parseAnthropicResponse(data);
+    expect(result.usage).toEqual({ inputTokens: 42, outputTokens: 17 });
+  });
+
+  it('parseOpenAIResponse includes usage', async () => {
+    const { parseOpenAIResponse } = await import('./llm-providers.js');
+    const data = {
+      id: 'chatcmpl-1',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant' as const, content: 'Hi' },
+        finish_reason: 'stop' as const,
+      }],
+      usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+    };
+    const result = parseOpenAIResponse(data);
+    expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 50 });
+  });
+
+  it('executeLLMIteration returns usage from provider', async () => {
+    const { executeLLMIteration } = await import('./llm.js');
+    const mockProvider = {
+      chat: vi.fn(async () => ({
+        content: 'done',
+        toolCalls: [{ name: 'task_complete', arguments: { artifacts: [] } }],
+        finishReason: 'tool_calls' as const,
+        usage: { inputTokens: 200, outputTokens: 80 },
+      })),
+    };
+    const executor = makeMockExecutor();
+    const task = makeTask();
+    const { usage } = await executeLLMIteration(mockProvider, executor, task, 1);
+    expect(usage).toEqual({ inputTokens: 200, outputTokens: 80 });
   });
 });
 

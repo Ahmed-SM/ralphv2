@@ -18,7 +18,10 @@ import type {
   IterationResult,
   ProgressEvent,
   LearningEvent,
+  PatternDetectedEvent,
   LLMProvider,
+  LLMUsage,
+  LLMConfig,
 } from '../types/index.js';
 import { createExecutor, Executor, GitOperations } from './executor.js';
 import type {
@@ -27,6 +30,9 @@ import type {
 } from '../skills/normalize/tracker-interface.js';
 import { createTracker } from '../skills/normalize/tracker-interface.js';
 import { executeLLMIteration, loadTaskContext, createDefaultLLMProvider } from './llm.js';
+import { detectPatterns, type DetectionContext } from '../skills/discovery/detect-patterns.js';
+import { generateImprovements, saveProposals } from '../skills/discovery/improve-agents.js';
+import { recordTaskMetrics, computeAggregateMetrics, appendMetricEvent, loadTaskMetrics, getCurrentPeriod, type TaskMetrics } from '../skills/track/record-metrics.js';
 
 export interface LoopContext {
   config: RuntimeConfig;
@@ -42,6 +48,33 @@ export interface LoopResult {
   tasksFailed: number;
   totalIterations: number;
   duration: number;
+  totalCost: number;
+}
+
+// =============================================================================
+// COST TRACKING
+// =============================================================================
+
+/** Default cost rates (USD per token) — conservative estimates */
+const DEFAULT_COST_PER_INPUT_TOKEN = 0.000003;   // $3 / 1M tokens
+const DEFAULT_COST_PER_OUTPUT_TOKEN = 0.000015;   // $15 / 1M tokens
+
+/**
+ * Estimate the cost of an LLM call from usage data.
+ *
+ * Uses configurable per-token rates from LLMConfig, falling back to
+ * conservative defaults. Returns 0 when usage data is unavailable.
+ */
+export function estimateCost(
+  usage: LLMUsage | undefined,
+  llmConfig?: LLMConfig,
+): number {
+  if (!usage) return 0;
+
+  const inputRate = llmConfig?.costPerInputToken ?? DEFAULT_COST_PER_INPUT_TOKEN;
+  const outputRate = llmConfig?.costPerOutputToken ?? DEFAULT_COST_PER_OUTPUT_TOKEN;
+
+  return usage.inputTokens * inputRate + usage.outputTokens * outputRate;
 }
 
 /**
@@ -72,6 +105,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     tasksFailed: 0,
     totalIterations: 0,
     duration: 0,
+    totalCost: 0,
   };
 
   if (dryRun) {
@@ -89,6 +123,12 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     // Check time limit
     if (Date.now() - startTime > config.loop.maxTimePerRun) {
       console.log('Time limit reached, stopping loop');
+      break;
+    }
+
+    // Check run cost limit
+    if (result.totalCost >= config.loop.maxCostPerRun) {
+      console.log(`Run cost limit reached ($${result.totalCost.toFixed(4)} >= $${config.loop.maxCostPerRun}), stopping loop`);
       break;
     }
 
@@ -113,8 +153,9 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     await updateTaskStatus(context, task.id, 'in_progress');
 
     // 4. Execute task loop
-    const taskResult = await executeTaskLoop(context, task);
+    const taskResult = await executeTaskLoop(context, task, result.totalCost);
     result.totalIterations += taskResult.iterations;
+    result.totalCost += taskResult.cost;
 
     // 5. Handle result
     if (taskResult.success) {
@@ -143,9 +184,10 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
       }
     }
 
-    // 6. Record learning
+    // 6. Record learning and run analysis
     if (config.learning.enabled) {
       await recordTaskCompletion(context, task, taskResult);
+      await runLearningAnalysis(context, task, taskResult);
     }
 
     // 7. Sync to tracker (skip in dry-run mode)
@@ -163,6 +205,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
   console.log(`  Tasks completed: ${result.tasksCompleted}`);
   console.log(`  Tasks failed: ${result.tasksFailed}`);
   console.log(`  Total iterations: ${result.totalIterations}`);
+  console.log(`  Total cost: $${result.totalCost.toFixed(4)}`);
   console.log(`  Duration: ${(result.duration / 1000).toFixed(1)}s`);
 
   return result;
@@ -280,10 +323,12 @@ export function isBlocked(task: Task, allTasks: Map<string, Task>): boolean {
  */
 export async function executeTaskLoop(
   context: LoopContext,
-  task: Task
-): Promise<{ success: boolean; iterations: number; reason?: string }> {
+  task: Task,
+  runCostSoFar = 0,
+): Promise<{ success: boolean; iterations: number; reason?: string; cost: number }> {
   const { config } = context;
   let iterations = 0;
+  let taskCost = 0;
   const startTime = Date.now();
 
   while (iterations < config.loop.maxIterationsPerTask) {
@@ -293,6 +338,29 @@ export async function executeTaskLoop(
         success: false,
         iterations,
         reason: 'Time limit exceeded',
+        cost: taskCost,
+      };
+    }
+
+    // Check per-task cost limit
+    if (taskCost >= config.loop.maxCostPerTask) {
+      console.log(`  Cost limit reached for task ($${taskCost.toFixed(4)} >= $${config.loop.maxCostPerTask})`);
+      return {
+        success: false,
+        iterations,
+        reason: `Task cost limit exceeded ($${taskCost.toFixed(4)})`,
+        cost: taskCost,
+      };
+    }
+
+    // Check per-run cost limit
+    if (runCostSoFar + taskCost >= config.loop.maxCostPerRun) {
+      console.log(`  Run cost limit reached ($${(runCostSoFar + taskCost).toFixed(4)} >= $${config.loop.maxCostPerRun})`);
+      return {
+        success: false,
+        iterations,
+        reason: `Run cost limit exceeded ($${(runCostSoFar + taskCost).toFixed(4)})`,
+        cost: taskCost,
       };
     }
 
@@ -302,24 +370,30 @@ export async function executeTaskLoop(
     // Execute iteration
     const result = await executeIteration(context, task, iterations);
 
-    // Log progress
+    // Track cost from LLM usage
+    const iterationCost = estimateCost(result.usage, config.llm);
+    taskCost += iterationCost;
+
+    // Log progress (include cost)
     await appendJsonl(context.executor, './state/progress.jsonl', {
       type: 'iteration',
       taskId: task.id,
       iteration: iterations,
       result: result.status,
+      cost: iterationCost,
+      taskCostSoFar: taskCost,
       timestamp: new Date().toISOString(),
     } as ProgressEvent);
 
     // Check result
     if (result.status === 'complete') {
-      console.log(`  Task complete: ${result.artifacts?.join(', ')}`);
-      return { success: true, iterations };
+      console.log(`  Task complete: ${result.artifacts?.join(', ')} (cost: $${taskCost.toFixed(4)})`);
+      return { success: true, iterations, cost: taskCost };
     }
 
     if (result.status === 'blocked') {
       console.log(`  Task blocked: ${result.blocker}`);
-      return { success: false, iterations, reason: result.blocker };
+      return { success: false, iterations, reason: result.blocker, cost: taskCost };
     }
 
     if (result.status === 'failed') {
@@ -335,6 +409,7 @@ export async function executeTaskLoop(
     success: false,
     iterations,
     reason: 'Max iterations reached',
+    cost: taskCost,
   };
 }
 
@@ -355,7 +430,7 @@ export async function executeIteration(
   context: LoopContext,
   task: Task,
   iteration: number
-): Promise<IterationResult> {
+): Promise<IterationResult & { usage?: LLMUsage }> {
   // LLM-powered execution path
   if (context.llmProvider) {
     try {
@@ -363,14 +438,14 @@ export async function executeIteration(
         context.executor,
         task,
       );
-      const { result } = await executeLLMIteration(
+      const { result, usage } = await executeLLMIteration(
         context.llmProvider,
         context.executor,
         task,
         iteration,
         { specContent, agentInstructions },
       );
-      return result;
+      return { ...result, usage };
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown LLM error';
       console.log(`  LLM iteration failed: ${msg}`);
@@ -447,6 +522,19 @@ export async function recordTaskCompletion(
   task: Task,
   result: { success: boolean; iterations: number; reason?: string }
 ): Promise<void> {
+  // Compute git diff stats from the last commit (if available)
+  let filesChanged = 0;
+  let linesChanged = 0;
+  if (result.success) {
+    try {
+      const stats = await context.git.diffStats();
+      filesChanged = stats.filesChanged;
+      linesChanged = stats.linesChanged;
+    } catch {
+      // Git stats are best-effort
+    }
+  }
+
   const event: LearningEvent = {
     type: 'task_completed',
     taskId: task.id,
@@ -455,14 +543,127 @@ export async function recordTaskCompletion(
     iterations: result.iterations,
     taskType: task.type,
     complexity: task.complexity,
-    filesChanged: 0, // TODO: Compute from git
-    linesChanged: 0, // TODO: Compute from git
+    filesChanged,
+    linesChanged,
     success: result.success,
     blockers: result.reason ? [result.reason] : undefined,
     timestamp: new Date().toISOString(),
   };
 
   await appendJsonl(context.executor, './state/learning.jsonl', event);
+}
+
+// =============================================================================
+// LEARNING ANALYSIS
+// =============================================================================
+
+/**
+ * Run learning analysis after task completion.
+ *
+ * This wires the existing pattern detection and improvement proposal
+ * components into the main loop. After each task completes:
+ *   1. Record detailed task metrics
+ *   2. Load all historical task metrics
+ *   3. Run pattern detection
+ *   4. Generate improvement proposals from detected patterns
+ *   5. Persist pattern events and proposals to learning.jsonl
+ *
+ * Errors are logged but never crash the loop.
+ */
+export async function runLearningAnalysis(
+  context: LoopContext,
+  task: Task,
+  result: { success: boolean; iterations: number; reason?: string }
+): Promise<void> {
+  const { config, executor, git } = context;
+
+  try {
+    // 1. Compute and record detailed task metrics
+    let filesChanged = 0;
+    let linesChanged = 0;
+    if (result.success) {
+      try {
+        const stats = await git.diffStats();
+        filesChanged = stats.filesChanged;
+        linesChanged = stats.linesChanged;
+      } catch {
+        // best-effort
+      }
+    }
+
+    const taskMetric = recordTaskMetrics(task, {
+      iterations: result.iterations,
+      filesChanged,
+      linesChanged,
+      blockers: result.reason ? [result.reason] : undefined,
+    });
+
+    await appendMetricEvent(
+      (p: string) => executor.readFile(p),
+      (p: string, c: string) => executor.writeFile(p, c),
+      './state/learning.jsonl',
+      { type: 'task_metric', timestamp: new Date().toISOString(), data: taskMetric }
+    );
+
+    // 2. Load historical metrics for pattern detection
+    const allMetrics = await loadTaskMetrics(
+      (p: string) => executor.readFile(p),
+      './state/learning.jsonl'
+    );
+
+    // 3. Derive current task state for context
+    const tasksLog = await readJsonl<TaskOperation>(executor, './state/tasks.jsonl');
+    const tasks = deriveTaskState(tasksLog);
+
+    // 4. Compute aggregate metrics for the current period
+    const period = getCurrentPeriod('month');
+    const aggregates = computeAggregateMetrics(allMetrics, period);
+
+    // 5. Run pattern detection
+    const detectionContext: DetectionContext = {
+      tasks,
+      metrics: allMetrics,
+      aggregates: [aggregates],
+      minConfidence: config.learning.minConfidence,
+    };
+
+    const detectionResult = detectPatterns(detectionContext);
+
+    // 6. Log detected patterns to learning.jsonl
+    for (const pattern of detectionResult.patterns) {
+      await appendJsonl(executor, './state/learning.jsonl', {
+        type: 'pattern_detected',
+        pattern: pattern.type,
+        confidence: pattern.confidence,
+        data: pattern.data,
+        evidence: pattern.evidence,
+        timestamp: pattern.timestamp,
+      } as PatternDetectedEvent);
+    }
+
+    // 7. Generate improvement proposals if patterns detected
+    if (detectionResult.patterns.length > 0) {
+      const improvements = generateImprovements(detectionResult.patterns, aggregates);
+
+      if (improvements.proposals.length > 0) {
+        await saveProposals(
+          (p: string) => executor.readFile(p),
+          (p: string, c: string) => executor.writeFile(p, c),
+          './state/learning.jsonl',
+          improvements.proposals
+        );
+
+        console.log(`  Learning: ${detectionResult.patterns.length} patterns detected, ${improvements.proposals.length} improvements proposed`);
+      }
+    }
+
+    if (detectionResult.patterns.length === 0) {
+      console.log('  Learning: no patterns detected (need more data)');
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    console.log(`  Learning analysis failed: ${msg}`);
+  }
 }
 
 // =============================================================================

@@ -19,6 +19,7 @@ function makeRuntimeConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfi
       maxIterationsPerTask: 10,
       maxTimePerTask: 60000,
       maxCostPerTask: 10,
+      maxCostPerRun: 100,
       maxTasksPerRun: 50,
       maxTimePerRun: 300000,
       onFailure: 'stop',

@@ -163,4 +163,25 @@ export class GitOperations {
   async checkout(ref: string): Promise<void> {
     await this.exec(`git checkout ${ref}`);
   }
+
+  /**
+   * Get diff stats (files changed, lines added/removed) for the last commit
+   */
+  async diffStats(): Promise<{ filesChanged: number; linesChanged: number }> {
+    try {
+      const output = await this.exec('git diff --shortstat HEAD~1 HEAD');
+      // Example: " 3 files changed, 42 insertions(+), 10 deletions(-)"
+      const filesMatch = output.match(/(\d+) files? changed/);
+      const insertionsMatch = output.match(/(\d+) insertions?\(\+\)/);
+      const deletionsMatch = output.match(/(\d+) deletions?\(-\)/);
+
+      const filesChanged = filesMatch ? parseInt(filesMatch[1], 10) : 0;
+      const insertions = insertionsMatch ? parseInt(insertionsMatch[1], 10) : 0;
+      const deletions = deletionsMatch ? parseInt(deletionsMatch[1], 10) : 0;
+
+      return { filesChanged, linesChanged: insertions + deletions };
+    } catch {
+      return { filesChanged: 0, linesChanged: 0 };
+    }
+  }
 }
