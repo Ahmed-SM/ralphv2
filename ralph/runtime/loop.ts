@@ -34,6 +34,7 @@ import { executeLLMIteration, loadTaskContext, createDefaultLLMProvider } from '
 import { detectPatterns, type DetectionContext } from '../skills/discovery/detect-patterns.js';
 import { generateImprovements, saveProposals } from '../skills/discovery/improve-agents.js';
 import { recordTaskMetrics, computeAggregateMetrics, appendMetricEvent, loadTaskMetrics, getCurrentPeriod, type TaskMetrics } from '../skills/track/record-metrics.js';
+import { validateOperation, type ValidationResult } from '../skills/discovery/validate-task.js';
 
 export interface LoopContext {
   config: RuntimeConfig;
@@ -540,7 +541,13 @@ export async function updateTaskStatus(
     timestamp: new Date().toISOString(),
   };
 
-  await appendJsonl(context.executor, './state/tasks.jsonl', op);
+  const validation = await validateAndAppendTaskOp(context.executor, './state/tasks.jsonl', op);
+  if (!validation.valid) {
+    console.log(`  Warning: Task ${taskId} status update to '${status}' had validation errors (applied anyway for resilience)`);
+    // Still append to preserve backwards compatibility — validation is advisory
+    // The validateAndAppendTaskOp already appended if valid, so only append if invalid
+    await appendJsonl(context.executor, './state/tasks.jsonl', op);
+  }
 
   if (reason) {
     await appendJsonl(context.executor, './state/progress.jsonl', {
@@ -845,6 +852,45 @@ async function loadTrackerAdapter(type: string): Promise<void> {
   if (path) {
     await import(path);
   }
+}
+
+// =============================================================================
+// TASK OPERATION VALIDATION
+// =============================================================================
+
+/**
+ * Validate and append a task operation to the tasks.jsonl log.
+ *
+ * Reads the current task state, validates the operation against the 5 rules
+ * from specs/task-schema.md, and only appends if valid. Returns the
+ * validation result so callers can handle errors.
+ *
+ * Rules enforced:
+ * 1. id must be unique (for create ops)
+ * 2. parent must exist if specified
+ * 3. blockedBy tasks must exist
+ * 4. status transitions must follow lifecycle
+ * 5. completedAt required when status is done
+ */
+export async function validateAndAppendTaskOp(
+  executor: Executor,
+  path: string,
+  op: TaskOperation,
+): Promise<ValidationResult> {
+  const log = await readJsonl<TaskOperation>(executor, path);
+  const currentState = deriveTaskState(log);
+
+  const result = validateOperation(op, currentState);
+
+  if (result.valid) {
+    await appendJsonl(executor, path, op);
+  } else {
+    for (const error of result.errors) {
+      console.log(`  Validation: [${error.rule}] ${error.message}`);
+    }
+  }
+
+  return result;
 }
 
 // =============================================================================

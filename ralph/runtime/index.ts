@@ -9,7 +9,7 @@ import { readFile, writeFile } from 'fs/promises';
 import { dispatch } from './cli.js';
 
 // Export modules for programmatic use
-export { runLoop, type LoopContext, type LoopResult, pickNextTask, executeTaskLoop, executeIteration, updateTaskStatus, recordTaskCompletion, runLearningAnalysis, syncTaskToTracker, getTrackerAuth, estimateCost, invokeHook, readJsonl, appendJsonl } from './loop.js';
+export { runLoop, type LoopContext, type LoopResult, pickNextTask, executeTaskLoop, executeIteration, updateTaskStatus, recordTaskCompletion, runLearningAnalysis, syncTaskToTracker, getTrackerAuth, estimateCost, invokeHook, validateAndAppendTaskOp, readJsonl, appendJsonl } from './loop.js';
 export { createExecutor, Executor, GitOperations } from './executor.js';
 export { createSandbox, Sandbox, printSandboxStatus, type FileChange } from './sandbox.js';
 export { executeLLMIteration, executeToolCall, buildSystemPrompt, buildIterationPrompt, interpretResponse, loadTaskContext, createLLMProvider, createDefaultLLMProvider, AGENT_TOOLS } from './llm.js';

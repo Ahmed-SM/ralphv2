@@ -360,6 +360,29 @@ Ralph v1 MVP is now functional with:
   - LoopHooks interface — 2 tests (all methods optional, any subset)
 - [x] Total: 29 new tests (1115 total across 31 test files)
 
+### Task Schema Validation (Phase 27) ✅ COMPLETE
+- [x] Implement validate-task.ts → [skills/discovery/validate-task.ts](./skills/discovery/validate-task.ts)
+- [x] Status lifecycle transitions (ALLOWED_TRANSITIONS map from spec lifecycle diagram)
+- [x] isValidTransition / getAllowedTransitions — lifecycle-aware transition checks
+- [x] validateCreate — unique ID, parent exists, blockers exist, completedAt on done
+- [x] validateUpdate — task exists, valid transition, completedAt on done, parent/blocker existence
+- [x] validateRelate — source and target task existence with relation-aware rule names
+- [x] validateOperation — dispatcher for all operation types (create, update, relate, link)
+- [x] validateOperationLog — full log replay validation (audit existing tasks.jsonl)
+- [x] validateAndAppendTaskOp — validated write to tasks.jsonl (in runtime/loop.ts)
+- [x] Wired into updateTaskStatus — validates before appending, advisory mode for resilience
+- [x] Exported from runtime/index.ts
+- [x] Unit tests — 77 tests → [skills/discovery/validate-task.test.ts](./skills/discovery/validate-task.test.ts)
+  - isValidTransition — 16 tests (all valid paths, all invalid paths, terminal states, unknown status)
+  - getAllowedTransitions — 5 tests (discovered, pending, done, cancelled, unknown)
+  - validateCreate — 12 tests (valid, duplicate ID, missing parent, parent exists, missing blocker, multiple blockers, blockers exist, done without completedAt, done with completedAt, non-done, multiple errors)
+  - validateUpdate — 11 tests (valid transition, missing task, early return, invalid transition, same status, done without completedAt, done with completedAt, existing completedAt, missing parent, missing blocker, title-only, error message)
+  - validateRelate — 7 tests (both exist, missing source, missing target, both missing, parent rule, blockedBy rule, subtask rule)
+  - validateOperation — 5 tests (create dispatch, update dispatch, relate dispatch, link missing, link valid)
+  - validateOperationLog — 14 tests (empty, clean log, duplicate ID, invalid transition, missing parent, continues after errors, accumulated state, relate valid, relate invalid, full lifecycle, blocked cycle, review paths, link valid, link invalid)
+  - edge cases — 6 tests (empty blockedBy, undefined blockedBy, no changes, operation type, taskId, result shape)
+- [x] Total: 77 new tests (1192 total across 32 test files)
+
 Next steps for production readiness:
 1. ~~Add LLM integration for intelligent task execution~~ ✅ Done
 2. ~~Implement concrete LLM API client (Anthropic/OpenAI HTTP adapter)~~ ✅ Done
@@ -368,9 +391,10 @@ Next steps for production readiness:
 5. ~~LLM cost tracking & budget enforcement~~ ✅ Done
 6. ~~CLI entry point refactor (proper bin entry)~~ ✅ Done
 7. ~~Loop hooks / observability~~ ✅ Done
-8. Live testing with Jira credentials
-9. Live testing with actual git repository
-10. Live testing with Linear API key
+8. ~~Task schema validation~~ ✅ Done
+9. Live testing with Jira credentials
+10. Live testing with actual git repository
+11. Live testing with Linear API key
 
 ## Dependencies
 
