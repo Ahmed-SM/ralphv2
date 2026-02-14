@@ -23,6 +23,7 @@
     "types": ["node"]
   },
   "include": [
+    "cli.ts",
     "runtime/**/*.ts",
     "skills/**/*.ts",
     "integrations/**/*.ts",

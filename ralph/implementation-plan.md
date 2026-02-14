@@ -318,15 +318,38 @@ Ralph v1 MVP is now functional with:
 - [x] Unit tests — 21 tests (6 estimateCost: undefined/defaults/custom/fallback/zero/large; 6 executeTaskLoop cost: no-LLM/accumulate/task-limit/run-limit/progress-log/heuristic; 3 usage parsing: Anthropic/OpenAI/executeLLMIteration; 3 Anthropic usage: extract/missing/propagate; 3 OpenAI usage: extract/missing/propagate)
 - [x] Total: 21 new tests (1026 total across 29 test files)
 
+### CLI Entry Point Refactor (Phase 25) ✅ COMPLETE
+- [x] Extracted CLI logic from runtime/index.ts into runtime/cli.ts (testable module)
+- [x] Created root cli.ts — shebang entry point for `npx ralph` / `npm install -g ralph`
+- [x] package.json bin → dist/cli.js now has a matching source file
+- [x] Updated tsconfig.json to include cli.ts in compilation
+- [x] runtime/index.ts simplified to library exports + direct-execution fallback
+- [x] Dependency injection via CliDeps interface (readFile, writeFile, log, error, importModule, cwd)
+- [x] Pure functions: parseArgs, resolveCommand, replayTaskOps, loadConfig
+- [x] Command handlers: runMain, runDiscover, runStatus, dispatch
+- [x] Unit tests — 60 tests → [runtime/cli.test.ts](./runtime/cli.test.ts)
+  - parseArgs — 15 tests (default run, all commands, --help/-h, --dry-run, --task, --config, multiple flags, unknown command)
+  - resolveCommand — 7 tests (undefined, empty, --help, -h, flag passthrough, valid commands, unknown)
+  - replayTaskOps — 7 tests (empty, create, update status/title, missing task, non-create ops, multiple updates)
+  - loadConfig — 3 tests (valid JSON, missing file, invalid JSON)
+  - dispatch — 4 tests (help, --help, sync stub, learn stub)
+  - runMain — 8 tests (banner, --dry-run, --task, success/failure exit codes, logging)
+  - runDiscover — 3 tests (end-to-end, dry-run writeFile, custom planFile)
+  - runStatus — 4 tests (counts by status, in-progress display, missing file, update replay)
+  - dispatch integration — 4 tests (no args→run, discover, status, flag passthrough)
+  - constants — 5 tests (HELP_TEXT commands/options, BANNER content, DEFAULT_CONFIG_PATH)
+- [x] Total: 60 new tests (1086 total across 30 test files)
+
 Next steps for production readiness:
 1. ~~Add LLM integration for intelligent task execution~~ ✅ Done
 2. ~~Implement concrete LLM API client (Anthropic/OpenAI HTTP adapter)~~ ✅ Done
 3. ~~Sandbox rollback on task failure~~ ✅ Done
 4. ~~CLI --dry-run and --task flags~~ ✅ Done
 5. ~~LLM cost tracking & budget enforcement~~ ✅ Done
-6. Live testing with Jira credentials
-7. Live testing with actual git repository
-8. Live testing with Linear API key
+6. ~~CLI entry point refactor (proper bin entry)~~ ✅ Done
+7. Live testing with Jira credentials
+8. Live testing with actual git repository
+9. Live testing with Linear API key
 
 ## Dependencies
 
