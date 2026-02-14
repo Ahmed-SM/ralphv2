@@ -22,6 +22,7 @@ import type {
   LLMProvider,
   LLMUsage,
   LLMConfig,
+  LoopHooks,
 } from '../types/index.js';
 import { createExecutor, Executor, GitOperations } from './executor.js';
 import type {
@@ -40,6 +41,7 @@ export interface LoopContext {
   git: GitOperations;
   workDir: string;
   llmProvider?: LLMProvider;
+  hooks?: LoopHooks;
 }
 
 export interface LoopResult {
@@ -75,6 +77,27 @@ export function estimateCost(
   const outputRate = llmConfig?.costPerOutputToken ?? DEFAULT_COST_PER_OUTPUT_TOKEN;
 
   return usage.inputTokens * inputRate + usage.outputTokens * outputRate;
+}
+
+// =============================================================================
+// HOOK INVOCATION
+// =============================================================================
+
+/**
+ * Safely invoke a loop hook. Hook errors are logged but never crash the loop.
+ */
+export function invokeHook<K extends keyof LoopHooks>(
+  hooks: LoopHooks | undefined,
+  name: K,
+  ...args: Parameters<NonNullable<LoopHooks[K]>>
+): void {
+  if (!hooks || typeof hooks[name] !== 'function') return;
+  try {
+    (hooks[name] as (...a: unknown[]) => void)(...args);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown hook error';
+    console.log(`  Hook ${name} failed: ${msg}`);
+  }
 }
 
 /**
@@ -149,6 +172,9 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     console.log(`\nProcessing task: ${task.id} - ${task.title}`);
     result.tasksProcessed++;
 
+    // Hook: onTaskStart
+    invokeHook(context.hooks, 'onTaskStart', task);
+
     // 3. Mark task in progress
     await updateTaskStatus(context, task.id, 'in_progress');
 
@@ -183,6 +209,9 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
         break;
       }
     }
+
+    // Hook: onTaskEnd
+    invokeHook(context.hooks, 'onTaskEnd', task, taskResult.success);
 
     // 6. Record learning and run analysis
     if (config.learning.enabled) {
@@ -367,6 +396,9 @@ export async function executeTaskLoop(
     iterations++;
     console.log(`  Iteration ${iterations}/${config.loop.maxIterationsPerTask}`);
 
+    // Hook: onIterationStart
+    invokeHook(context.hooks, 'onIterationStart', task, iterations);
+
     // Execute iteration
     const result = await executeIteration(context, task, iterations);
 
@@ -384,6 +416,9 @@ export async function executeTaskLoop(
       taskCostSoFar: taskCost,
       timestamp: new Date().toISOString(),
     } as ProgressEvent);
+
+    // Hook: onIterationEnd
+    invokeHook(context.hooks, 'onIterationEnd', task, iterations, result);
 
     // Check result
     if (result.status === 'complete') {
@@ -438,13 +473,17 @@ export async function executeIteration(
         context.executor,
         task,
       );
-      const { result, usage } = await executeLLMIteration(
+      const { result, actions, usage } = await executeLLMIteration(
         context.llmProvider,
         context.executor,
         task,
         iteration,
         { specContent, agentInstructions },
       );
+      // Hook: onAction for each action executed during this iteration
+      for (const action of actions) {
+        invokeHook(context.hooks, 'onAction', action);
+      }
       return { ...result, usage };
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown LLM error';
@@ -629,7 +668,7 @@ export async function runLearningAnalysis(
 
     const detectionResult = detectPatterns(detectionContext);
 
-    // 6. Log detected patterns to learning.jsonl
+    // 6. Log detected patterns to learning.jsonl and fire anomaly hooks
     for (const pattern of detectionResult.patterns) {
       await appendJsonl(executor, './state/learning.jsonl', {
         type: 'pattern_detected',
@@ -639,6 +678,20 @@ export async function runLearningAnalysis(
         evidence: pattern.evidence,
         timestamp: pattern.timestamp,
       } as PatternDetectedEvent);
+
+      // Fire onAnomaly hook for anomaly-type patterns
+      if (pattern.type === 'iteration_anomaly' || pattern.type === 'failure_mode') {
+        const severity = pattern.confidence >= 0.9 ? 'high'
+          : pattern.confidence >= 0.7 ? 'medium'
+          : 'low';
+        invokeHook(context.hooks, 'onAnomaly', {
+          type: 'anomaly_detected',
+          anomaly: pattern.description,
+          severity,
+          context: { pattern: pattern.type, ...pattern.data },
+          timestamp: pattern.timestamp,
+        });
+      }
     }
 
     // 7. Generate improvement proposals if patterns detected

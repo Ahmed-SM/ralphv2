@@ -257,6 +257,15 @@ export interface AnomalyDetectedEvent {
 // LOOP TYPES
 // =============================================================================
 
+export interface LoopHooks {
+  onTaskStart?(task: Task): void;
+  onIterationStart?(task: Task, iteration: number): void;
+  onAction?(action: Action): void;
+  onIterationEnd?(task: Task, iteration: number, result: IterationResult): void;
+  onTaskEnd?(task: Task, success: boolean): void;
+  onAnomaly?(anomaly: AnomalyDetectedEvent): void;
+}
+
 export interface LoopConfig {
   maxIterationsPerTask: number;
   maxTimePerTask: number;

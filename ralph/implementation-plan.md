@@ -340,6 +340,26 @@ Ralph v1 MVP is now functional with:
   - constants — 5 tests (HELP_TEXT commands/options, BANNER content, DEFAULT_CONFIG_PATH)
 - [x] Total: 60 new tests (1086 total across 30 test files)
 
+### Loop Hooks / Observability (Phase 26) ✅ COMPLETE
+- [x] Added `LoopHooks` interface to types/index.ts (onTaskStart, onIterationStart, onAction, onIterationEnd, onTaskEnd, onAnomaly)
+- [x] Added optional `hooks` field to `LoopContext`
+- [x] Implemented `invokeHook()` — safe hook invocation with error catching (hook errors are logged, never crash the loop)
+- [x] Wired `onTaskStart` into `runLoop()` — fires when a task is picked for processing
+- [x] Wired `onTaskEnd` into `runLoop()` — fires after task success/failure handling
+- [x] Wired `onIterationStart` into `executeTaskLoop()` — fires before each iteration
+- [x] Wired `onIterationEnd` into `executeTaskLoop()` — fires after each iteration with result
+- [x] Wired `onAction` into `executeIteration()` — fires for each LLM tool call action
+- [x] Wired `onAnomaly` into `runLearningAnalysis()` — fires on iteration_anomaly and failure_mode patterns with severity derived from confidence
+- [x] Exported `invokeHook` from runtime/index.ts
+- [x] Unit tests — 29 tests → [runtime/loop-hooks.test.ts](./runtime/loop-hooks.test.ts)
+  - invokeHook — 11 tests (correct args for all hook types, undefined hooks, undefined specific hook, non-function hook, Error catch+log, non-Error catch, task/iteration/result/anomaly/action argument passing)
+  - executeTaskLoop hooks — 5 tests (onIterationStart fires, onIterationEnd fires with result, multi-iteration hook calls, undefined hooks safety, empty hooks safety)
+  - executeIteration hooks — 5 tests (onAction with LLM tool calls, no onAction in heuristic path, no onAction when LLM returns no tools, multiple tool calls, hook error doesn't prevent result)
+  - LoopContext hooks field — 3 tests (optional, complete hooks, partial hooks)
+  - hook error resilience — 3 tests (onIterationStart error, onIterationEnd error, all hooks throwing)
+  - LoopHooks interface — 2 tests (all methods optional, any subset)
+- [x] Total: 29 new tests (1115 total across 31 test files)
+
 Next steps for production readiness:
 1. ~~Add LLM integration for intelligent task execution~~ ✅ Done
 2. ~~Implement concrete LLM API client (Anthropic/OpenAI HTTP adapter)~~ ✅ Done
@@ -347,9 +367,10 @@ Next steps for production readiness:
 4. ~~CLI --dry-run and --task flags~~ ✅ Done
 5. ~~LLM cost tracking & budget enforcement~~ ✅ Done
 6. ~~CLI entry point refactor (proper bin entry)~~ ✅ Done
-7. Live testing with Jira credentials
-8. Live testing with actual git repository
-9. Live testing with Linear API key
+7. ~~Loop hooks / observability~~ ✅ Done
+8. Live testing with Jira credentials
+9. Live testing with actual git repository
+10. Live testing with Linear API key
 
 ## Dependencies
 
