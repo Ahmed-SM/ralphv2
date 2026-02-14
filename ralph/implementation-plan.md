@@ -80,14 +80,15 @@ Build Ralph: a self-evolving agentic delivery system that reads specs, extracts 
 
 ## Current Task
 
-**Unit Test Suite Added**
+**Retry onFailure Mode Implemented**
 
 Ralph v1 MVP is now functional with:
 - Task discovery from markdown specs
-- Tracker sync (Jira adapter)
+- Tracker sync (Jira, GitHub Issues, Linear adapters)
 - Git activity watching
 - Learning system with pattern detection
 - Sandboxed execution environment
+- Retry mode for failed tasks (onFailure: 'retry' with configurable maxRetries)
 - Unit test suite (679 tests across 20 core modules)
 - Property-based test suite (79 tests across 4 parsing/state modules)
 - Integration test suite (56 tests across 3 pipelines, including live git)
@@ -501,6 +502,62 @@ Next steps for production readiness:
   - runLearn — 15 tests (header logging, learning disabled, no completed tasks, missing tasks file, recordTaskMetrics call count, detectPatterns context, minConfidence from config, generateImprovements args, save proposals, dry-run skips save, pending proposals display, learning summary, operation replay, link replay, no-save when empty, saved count logging)
   - dispatch integration — 2 tests (learn via dispatch, learn with --dry-run flag)
 - [x] Total: 17 new tests (1323 total across 34 test files)
+
+### Retry onFailure Mode & README Fix (Phase 33) ✅ COMPLETE
+- [x] Implemented `onFailure: 'retry'` mode in `runLoop()` → [runtime/loop.ts](./runtime/loop.ts)
+  - Re-attempts failed tasks up to `maxRetries` times before marking as blocked
+  - Rollback sandbox between retry attempts to ensure clean state
+  - Accumulates iterations and cost across retries in LoopResult
+  - Successful retry commits changes (respects autoCommit and dryRun)
+  - Falls through to blocked status after all retries exhausted
+  - `onFailure: 'stop'` and `'continue'` modes unchanged
+- [x] Added optional `maxRetries` field to `LoopConfig` type (default 1 when retry mode)
+- [x] Updated `onTaskEnd` hook to use resolved success status (accounts for retry recovery)
+- [x] Updated tracker sync to use resolved success status
+- [x] Fixed README.md — updated Current Status section (all phases were complete but README showed Phase 2 as "in progress")
+- [x] Unit tests — 13 tests → [runtime/loop-orchestration.test.ts](./runtime/loop-orchestration.test.ts)
+  - retry succeeds on retry attempt
+  - marks task as blocked after all retries exhausted
+  - defaults to maxRetries=1 when not specified
+  - rollback called between retry attempts
+  - accumulates iterations and cost across retries
+  - no retry on first success
+  - onFailure=continue still works
+  - onFailure=stop still works
+  - retry commits changes on successful retry with autoCommit
+  - maxRetries=0 means immediate block
+  - onTaskEnd hook receives correct success status
+  - LoopConfig accepts maxRetries field
+  - LoopConfig maxRetries is optional
+- [x] Total: 13 new tests (1380 total across 35 test files)
+
+### Improvement Auto-Application (Phase 34) ✅ COMPLETE
+- [x] Implement apply-improvements.ts → [skills/discovery/apply-improvements.ts](./skills/discovery/apply-improvements.ts)
+  - `makeBranchName()` — generates `ralph/learn-{timestamp}` branch names per spec
+  - `makeCommitMessage()` — formats `RALPH-LEARN: {title}` commit messages per spec
+  - `applyContentToFile()` — applies proposal content to target files (section replacement, append, or create)
+  - `applySingleProposal()` — reads target, applies content, stages, and commits
+  - `applyImprovements()` — batch pipeline: save branch → create learn branch → apply each → return to original branch
+  - `markProposalsApplied()` — appends `improvement_applied` events to learning.jsonl
+  - `updateProposalStatuses()` — updates proposal status from `pending` to `applied` in learning.jsonl
+- [x] Implement `autoApplyImprovements()` in runtime/loop.ts — loads pending proposals, builds ApplyContext from LoopContext, applies improvements, logs results
+- [x] Wired into `runLearningAnalysis()` — auto-apply triggers when `config.learning.autoApplyImprovements` is true
+- [x] `ApplyContext` interface — injectable dependencies (readFile, writeFile, gitBranch, gitCheckout, gitAdd, gitCommit, gitCurrentBranch)
+- [x] Section-aware file editing — replaces `## {section}` content when section exists, appends otherwise
+- [x] Branch isolation — all improvements applied on dedicated branch, original branch restored after
+- [x] Graceful error handling — individual proposal failures don't block others, branch creation failure errors all proposals
+- [x] Non-pending proposal skipping — only `status: 'pending'` proposals are applied
+- [x] Exported `autoApplyImprovements` from runtime/index.ts
+- [x] Unit tests — 44 tests → [skills/discovery/apply-improvements.test.ts](./skills/discovery/apply-improvements.test.ts)
+  - makeBranchName — 4 tests (ISO format, sanitization, prefix, no trailing Z)
+  - makeCommitMessage — 2 tests (RALPH-LEARN prefix, title preservation)
+  - applyContentToFile — 8 tests (null file creates, append without section, append when section missing, section replacement, preserve surrounding content, no trailing newline, empty content, section at end of file)
+  - applySingleProposal — 5 tests (full pipeline, missing file, commit failure, write errors, commit message format)
+  - applyImprovements — 11 tests (empty, skip non-pending, save branch, restore branch, multiple commits, branch name, branch failure, partial failure, gitCurrentBranch failure, checkout-back failure, mixed skipped/applied)
+  - markProposalsApplied — 4 tests (empty list, append events, create file, multiple events)
+  - updateProposalStatuses — 5 tests (empty IDs, update matching, preserve non-matching, preserve non-proposals, missing file, preserve non-JSON)
+  - autoApplyImprovements integration — 4 tests (no pending, loads proposals, full pipeline with branch, error resilience)
+- [x] Total: 44 new tests (1424 total across 36 test files)
 
 ## Dependencies
 

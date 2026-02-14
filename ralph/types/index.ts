@@ -282,6 +282,7 @@ export interface LoopConfig {
   maxCostPerRun: number;
   maxTimePerRun: number;
   onFailure: 'stop' | 'continue' | 'retry';
+  maxRetries?: number;
   parallelism: number;
   dryRun?: boolean;
   taskFilter?: string;

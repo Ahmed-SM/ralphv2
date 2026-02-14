@@ -34,7 +34,8 @@ import { createTracker } from '../skills/normalize/tracker-interface.js';
 import { executeLLMIteration, loadTaskContext, createDefaultLLMProvider } from './llm.js';
 import { detectPatterns, type DetectionContext } from '../skills/discovery/detect-patterns.js';
 import { watchGitActivity, type WatchContext, type WatchOptions, type WatchResult } from '../skills/track/index.js';
-import { generateImprovements, saveProposals } from '../skills/discovery/improve-agents.js';
+import { generateImprovements, saveProposals, loadPendingProposals } from '../skills/discovery/improve-agents.js';
+import { applyImprovements, markProposalsApplied, updateProposalStatuses, type ApplyContext } from '../skills/discovery/apply-improvements.js';
 import { recordTaskMetrics, computeAggregateMetrics, appendMetricEvent, loadTaskMetrics, getCurrentPeriod, type TaskMetrics } from '../skills/track/record-metrics.js';
 import { validateOperation, type ValidationResult } from '../skills/discovery/validate-task.js';
 import { checkCompletion, createCompletionContext } from './completion.js';
@@ -191,6 +192,8 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     result.totalCost += taskResult.cost;
 
     // 5. Handle result
+    let taskSuccess = taskResult.success;
+
     if (taskResult.success) {
       await updateTaskStatus(context, task.id, 'done');
       result.tasksCompleted++;
@@ -208,17 +211,52 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
       executor.rollback();
       console.log(`  Sandbox rolled back for failed task ${task.id}`);
 
-      await updateTaskStatus(context, task.id, 'blocked', taskResult.reason);
-      result.tasksFailed++;
+      if (config.loop.onFailure === 'retry') {
+        // Retry mode: re-attempt the task up to maxRetries times
+        const maxRetries = config.loop.maxRetries ?? 1;
 
-      if (config.loop.onFailure === 'stop') {
-        console.log('Task failed, stopping loop');
-        break;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          console.log(`  Retrying task ${task.id} (attempt ${attempt}/${maxRetries})`);
+
+          const retryResult = await executeTaskLoop(context, task, result.totalCost);
+          result.totalIterations += retryResult.iterations;
+          result.totalCost += retryResult.cost;
+
+          if (retryResult.success) {
+            await updateTaskStatus(context, task.id, 'done');
+            result.tasksCompleted++;
+            taskSuccess = true;
+
+            // Commit changes (skip in dry-run mode)
+            if (config.git.autoCommit && !dryRun) {
+              await executor.flush();
+              await git.add('.');
+              await git.commit(`${config.git.commitPrefix}${task.id}: ${task.title}`);
+            } else if (config.git.autoCommit && dryRun) {
+              console.log(`  [DRY RUN] Would commit: ${config.git.commitPrefix}${task.id}: ${task.title}`);
+            }
+            break;
+          } else {
+            // Rollback between retry attempts
+            executor.rollback();
+            console.log(`  Retry attempt ${attempt} failed: ${retryResult.reason}`);
+          }
+        }
+      }
+
+      if (!taskSuccess) {
+        await updateTaskStatus(context, task.id, 'blocked', taskResult.reason);
+        result.tasksFailed++;
+
+        if (config.loop.onFailure === 'stop') {
+          console.log('Task failed, stopping loop');
+          break;
+        }
       }
     }
 
     // Hook: onTaskEnd
-    invokeHook(context.hooks, 'onTaskEnd', task, taskResult.success);
+    invokeHook(context.hooks, 'onTaskEnd', task, taskSuccess);
 
     // 6. Record learning and run analysis
     if (config.learning.enabled) {
@@ -228,7 +266,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
 
     // 7. Sync to tracker (skip in dry-run mode)
     if (!dryRun) {
-      await syncTaskToTracker(context, task, taskResult.success);
+      await syncTaskToTracker(context, task, taskSuccess);
     } else {
       console.log(`  [DRY RUN] Would sync task ${task.id} to tracker`);
     }
@@ -736,9 +774,98 @@ export async function runLearningAnalysis(
     if (detectionResult.patterns.length === 0) {
       console.log('  Learning: no patterns detected (need more data)');
     }
+
+    // 8. Auto-apply improvements if configured
+    if (config.learning.autoApplyImprovements) {
+      await autoApplyImprovements(context);
+    }
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     console.log(`  Learning analysis failed: ${msg}`);
+  }
+}
+
+/**
+ * Auto-apply pending improvement proposals.
+ *
+ * Loads all pending proposals from learning.jsonl, applies them to target files
+ * on a dedicated branch (ralph/learn-{timestamp}), and logs ImprovementAppliedEvents.
+ *
+ * Per the learning-system spec:
+ *   1. Create branch: ralph/learn-{timestamp}
+ *   2. Apply change to target file
+ *   3. Commit with message: RALPH-LEARN: {description}
+ *   4. Log ImprovementAppliedEvent
+ *
+ * Errors are logged but never crash the loop.
+ */
+export async function autoApplyImprovements(
+  context: LoopContext,
+): Promise<void> {
+  const { executor, git } = context;
+  const learningPath = './state/learning.jsonl';
+
+  try {
+    // Load pending proposals
+    const pending = await loadPendingProposals(
+      (p: string) => executor.readFile(p),
+      learningPath
+    );
+
+    if (pending.length === 0) {
+      return;
+    }
+
+    console.log(`  Learning: auto-applying ${pending.length} pending improvements`);
+
+    // Build ApplyContext from LoopContext
+    const applyCtx: ApplyContext = {
+      readFile: (p: string) => executor.readFile(p),
+      writeFile: (p: string, c: string) => executor.writeFile(p, c),
+      gitBranch: (name: string) => git.branch(name),
+      gitCheckout: (ref: string) => git.checkout(ref),
+      gitAdd: (files: string | string[]) => git.add(files),
+      gitCommit: (message: string) => git.commit(message),
+      gitCurrentBranch: () => git.branch(),
+    };
+
+    // Apply all pending proposals
+    const result = await applyImprovements(applyCtx, pending);
+
+    // Log applied events
+    if (result.applied.length > 0) {
+      await markProposalsApplied(
+        (p: string) => executor.readFile(p),
+        (p: string, c: string) => executor.writeFile(p, c),
+        learningPath,
+        result.applied
+      );
+
+      // Update proposal statuses to 'applied'
+      const appliedIds = result.applied.map(a => a.id);
+      await updateProposalStatuses(
+        (p: string) => executor.readFile(p),
+        (p: string, c: string) => executor.writeFile(p, c),
+        learningPath,
+        appliedIds
+      );
+
+      console.log(`  Learning: applied ${result.applied.length} improvements on branch ${result.applied[0]?.branch || 'unknown'}`);
+    }
+
+    if (result.skipped.length > 0) {
+      console.log(`  Learning: skipped ${result.skipped.length} proposals`);
+    }
+
+    if (result.errors.length > 0) {
+      console.log(`  Learning: ${result.errors.length} proposals failed to apply`);
+      for (const err of result.errors) {
+        console.log(`    ${err.id}: ${err.error}`);
+      }
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    console.log(`  Learning auto-apply failed: ${msg}`);
   }
 }
 
