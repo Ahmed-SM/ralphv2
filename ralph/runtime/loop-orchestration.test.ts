@@ -11,6 +11,8 @@ import {
   pullFromTracker,
   getTrackerAuth,
   estimateCost,
+  computeRunKpis,
+  validateInductionInvariant,
   readJsonl,
   appendJsonl,
   type LoopContext,
@@ -1986,6 +1988,81 @@ describe('estimateCost', () => {
 });
 
 // =============================================================================
+// Induction Invariant Contract TESTS
+// =============================================================================
+
+describe('induction invariant contract', () => {
+  it('computes run KPIs correctly', () => {
+    const kpis = computeRunKpis({
+      tasksProcessed: 4,
+      tasksCompleted: 3,
+      taskDurationsMs: [1000, 2000, 3000, 4000],
+      rollbackCount: 1,
+      escapedDefects: 0,
+      humanInterventions: 1,
+      maxTimePerTaskMs: 5000,
+    });
+
+    expect(kpis.successRate).toBeCloseTo(0.75, 6);
+    expect(kpis.avgCycleTimeMs).toBe(2500);
+    expect(kpis.rollbackRate).toBeCloseTo(0.25, 6);
+    expect(kpis.escapedDefects).toBe(0);
+    expect(kpis.humanInterventions).toBe(1);
+  });
+
+  it('passes in core mode without enforcement', () => {
+    const kpis = computeRunKpis({
+      tasksProcessed: 2,
+      tasksCompleted: 0,
+      taskDurationsMs: [10000, 12000],
+      rollbackCount: 2,
+      escapedDefects: 2,
+      humanInterventions: 5,
+      maxTimePerTaskMs: 1000,
+    });
+
+    const report = validateInductionInvariant(kpis, 'core');
+    expect(report.passed).toBe(true);
+    expect(report.enforced).toBe(false);
+    expect(report.violations).toEqual([]);
+  });
+
+  it('fails in delivery mode when escaped defects are non-zero', () => {
+    const kpis = computeRunKpis({
+      tasksProcessed: 3,
+      tasksCompleted: 3,
+      taskDurationsMs: [100, 100, 100],
+      rollbackCount: 0,
+      escapedDefects: 1,
+      humanInterventions: 0,
+      maxTimePerTaskMs: 1000,
+    });
+
+    const report = validateInductionInvariant(kpis, 'delivery');
+    expect(report.passed).toBe(false);
+    expect(report.enforced).toBe(true);
+    expect(report.violations.some(v => v.startsWith('escaped_defects_nonzero:'))).toBe(true);
+  });
+
+  it('passes in delivery mode when all thresholds are met', () => {
+    const kpis = computeRunKpis({
+      tasksProcessed: 5,
+      tasksCompleted: 5,
+      taskDurationsMs: [100, 200, 300, 400, 500],
+      rollbackCount: 1,
+      escapedDefects: 0,
+      humanInterventions: 1,
+      maxTimePerTaskMs: 1000,
+    });
+
+    const report = validateInductionInvariant(kpis, 'delivery');
+    expect(report.passed).toBe(true);
+    expect(report.enforced).toBe(true);
+    expect(report.violations).toEqual([]);
+  });
+});
+
+// =============================================================================
 // executeTaskLoop COST TRACKING TESTS
 // =============================================================================
 
@@ -3322,4 +3399,3 @@ describe('discovered task lifecycle promotion', () => {
     expect(ops[2].changes.status).toBe('in_progress');
   });
 });
-

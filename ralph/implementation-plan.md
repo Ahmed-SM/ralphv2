@@ -977,10 +977,10 @@ Bootstrap assets:
    - Propose updates to `specs/*.md` and `implementation-plan.md`.
    - Persist rationale and outcomes in append-only learning events.
 
-- [ ] **Define induction invariant (system-level contract):**
+- [x] **Define induction invariant (system-level contract):**
   - "Given only repo + markdown specs + policies, Ralph can deliver a scoped feature safely, with measurable quality."
-  - Record invariant in [specs/loop-mechanics.md](./specs/loop-mechanics.md) and runtime validation checks.
-  - Add KPI set for each run: success rate, cycle time, escaped defects, rollback rate, human interventions.
+  - Record invariant in [specs/loop-mechanics.md](./specs/loop-mechanics.md) and runtime validation checks → implemented in [runtime/loop.ts](./runtime/loop.ts) (`computeRunKpis`, `validateInductionInvariant`, run-end validation events).
+  - Add KPI set for each run: success rate, cycle time, escaped defects, rollback rate, human interventions → emitted as run KPI payload in invariant validation events.
 - [ ] **Add external-system bootstrap pipeline:**
   - Input: arbitrary repository + minimal policy/config
   - Output: generated `specs/*.md` baseline and `implementation-plan.md` for that target system
@@ -1003,6 +1003,33 @@ Bootstrap assets:
   - Require invariant pass for N consecutive tasks per repo before autonomy is increased
   - Publish comparative dashboard for each repo using shared KPI schema.
 
+### Multi-Run Consensus & Idempotency (Phase 45) 🟡 PLANNED
+
+> Enable safe parallel workers and concurrent runs without duplicate execution or tracker side effects.
+
+- [ ] Define consensus and coordination model spec → [specs/multi-run-consensus.md](./specs/multi-run-consensus.md)
+- [ ] Define atomic state-write contract spec → [specs/state-atomicity.md](./specs/state-atomicity.md)
+- [ ] Define tracker idempotency contract spec → [specs/tracker-idempotency.md](./specs/tracker-idempotency.md)
+- [ ] Implement leader lease acquisition/renewal in runtime loop
+- [ ] Implement task claim lease before execution (single-owner task execution)
+- [ ] Replace read-modify-write JSONL appends with atomic append + dedupe `eventId`
+- [ ] Add `state/tracker-ops.jsonl` dedupe log and wire into sync paths
+- [ ] Make Jira create/transition/comment operations idempotent via deterministic op keys
+- [ ] Add conflict/retry/backoff handling for CAS and lease renewal failures
+- [ ] Add integration tests with two concurrent loop instances (same repo)
+- [ ] Add chaos tests: leader crash, claim expiry, network timeout during tracker writes
+- [ ] Expose metrics: append conflicts, lease loss, duplicate-prevented tracker ops
+
+### Sandbox Backend Abstraction & A/B Cutover (Phase 46) ⏸️ ON HOLD
+
+> Introduce a backend abstraction for sandbox execution and validate a future just-bash backend with side-by-side CI before any cutover.
+
+- [ ] Introduce a `SandboxAdapter` interface (current executor/sandbox behavior as baseline adapter).
+- [ ] Add a second backend: real `just-bash` (feature-flagged).
+- [ ] Run both backends in CI against the same integration test suite before cutover.
+- [ ] Add explicit A/B validation reports (parity, performance, failure profile) as release gate.
+- [ ] Keep this phase on hold until explicitly resumed by human instruction.
+
 ## Dependencies
 
 ```
@@ -1021,6 +1048,10 @@ Phase 6 (Just-Bash) ✅
 Phase 43 (Policy Engine) ✅
     ↓
 Phase 44 (Inductive External Delivery) 🟡
+    ↓
+Phase 45 (Multi-Run Consensus) 🟡
+    ↓
+Phase 46 (Sandbox Backend A/B) ⏸️
 ```
 
 ## Success Criteria
@@ -1083,13 +1114,27 @@ Phase 43 complete: ✅
 
 Phase 44 planned: 🟡
 
-- [ ] Induction invariant encoded as enforceable runtime contract
+- [x] Induction invariant encoded as enforceable runtime contract
 - [ ] Bootstrap generation of `specs/*.md` and `implementation-plan.md` for external repos
 - [ ] Human review required for generated plans before execution
 - [ ] Drift-aware spec/plan tailoring loop with append-only rationale
 - [ ] External pilot proof across 3 heterogeneous repositories
 
+Phase 45 planned: 🟡
+
+- [ ] Leader lease and task claim consensus
+- [ ] Atomic JSONL append/CAS for concurrent writers
+- [ ] Idempotent tracker operations with dedupe log
+- [ ] Concurrency and failure-recovery integration tests
+
+Phase 46 on hold: ⏸️
+
+- [ ] `SandboxAdapter` abstraction introduced
+- [ ] `just-bash` backend added behind feature flag
+- [ ] CI dual-backend parity suite (A/B) passing
+- [ ] Cutover blocked until explicit human resume/approval
+
 ---
 
-_Status: Ralph v1 MVP complete; Phase 43.5 (Policy Enforcement Integration) complete; Phase 44 planned for external-system induction_
+_Status: Ralph v1 MVP complete; Phase 43.5 (Policy Enforcement Integration) complete; Phase 44 and Phase 45 planned; Phase 46 defined and on hold pending explicit resume_
 _Human review: Required for generated plans/specs and production deployment_

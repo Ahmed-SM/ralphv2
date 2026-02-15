@@ -63,6 +63,34 @@ export interface LoopResult {
   totalCost: number;
 }
 
+export interface RunKpiInput {
+  tasksProcessed: number;
+  tasksCompleted: number;
+  taskDurationsMs: number[];
+  rollbackCount: number;
+  escapedDefects: number;
+  humanInterventions: number;
+  maxTimePerTaskMs: number;
+}
+
+export interface RunKpis {
+  successRate: number;
+  avgCycleTimeMs: number;
+  escapedDefects: number;
+  rollbackRate: number;
+  humanInterventions: number;
+  tasksProcessed: number;
+  maxTimePerTaskMs: number;
+}
+
+export interface InductionInvariantReport {
+  passed: boolean;
+  enforced: boolean;
+  violations: string[];
+  mode: RalphPolicy['mode'];
+  kpis: RunKpis;
+}
+
 // =============================================================================
 // COST TRACKING
 // =============================================================================
@@ -87,6 +115,112 @@ export function estimateCost(
   const outputRate = llmConfig?.costPerOutputToken ?? DEFAULT_COST_PER_OUTPUT_TOKEN;
 
   return usage.inputTokens * inputRate + usage.outputTokens * outputRate;
+}
+
+// =============================================================================
+// INDUCTION INVARIANT CONTRACT (PHASE 44)
+// =============================================================================
+
+/**
+ * Compute run-level KPIs used by the induction invariant contract.
+ *
+ * KPI set (per Phase 44):
+ * - success rate
+ * - average cycle time
+ * - escaped defects
+ * - rollback rate
+ * - human interventions
+ */
+export function computeRunKpis(input: RunKpiInput): RunKpis {
+  const {
+    tasksProcessed,
+    tasksCompleted,
+    taskDurationsMs,
+    rollbackCount,
+    escapedDefects,
+    humanInterventions,
+    maxTimePerTaskMs,
+  } = input;
+
+  const avgCycleTimeMs = taskDurationsMs.length > 0
+    ? taskDurationsMs.reduce((sum, d) => sum + d, 0) / taskDurationsMs.length
+    : 0;
+
+  const denominator = tasksProcessed > 0 ? tasksProcessed : 1;
+
+  return {
+    successRate: tasksCompleted / denominator,
+    avgCycleTimeMs,
+    escapedDefects,
+    rollbackRate: rollbackCount / denominator,
+    humanInterventions,
+    tasksProcessed,
+    maxTimePerTaskMs,
+  };
+}
+
+/**
+ * Validate the system-level induction invariant.
+ *
+ * Enforcement applies in delivery mode:
+ * - successRate >= 0.80
+ * - avgCycleTimeMs <= maxTimePerTaskMs
+ * - escapedDefects = 0
+ * - rollbackRate <= 0.30
+ * - humanInterventions <= max(1, ceil(tasksProcessed * 0.20))
+ */
+export function validateInductionInvariant(
+  kpis: RunKpis,
+  mode: RalphPolicy['mode'] = 'delivery',
+): InductionInvariantReport {
+  // Core mode: record KPIs but do not enforce the delivery induction gate.
+  if (mode === 'core') {
+    return {
+      passed: true,
+      enforced: false,
+      violations: [],
+      mode,
+      kpis,
+    };
+  }
+
+  if (kpis.tasksProcessed === 0) {
+    return {
+      passed: true,
+      enforced: true,
+      violations: [],
+      mode,
+      kpis,
+    };
+  }
+
+  const violations: string[] = [];
+
+  if (kpis.successRate < 0.8) {
+    violations.push(`success_rate_below_threshold:${kpis.successRate.toFixed(3)}<0.800`);
+  }
+  if (kpis.avgCycleTimeMs > kpis.maxTimePerTaskMs) {
+    violations.push(`cycle_time_exceeds_limit:${Math.round(kpis.avgCycleTimeMs)}>${kpis.maxTimePerTaskMs}`);
+  }
+  if (kpis.escapedDefects > 0) {
+    violations.push(`escaped_defects_nonzero:${kpis.escapedDefects}`);
+  }
+  if (kpis.rollbackRate > 0.3) {
+    violations.push(`rollback_rate_above_threshold:${kpis.rollbackRate.toFixed(3)}>0.300`);
+  }
+
+  const maxInterventions = Math.max(1, Math.ceil(kpis.tasksProcessed * 0.2));
+  if (kpis.humanInterventions > maxInterventions) {
+    violations.push(`human_interventions_above_threshold:${kpis.humanInterventions}>${maxInterventions}`);
+  }
+
+  return {
+    passed: violations.length === 0,
+    enforced: true,
+    violations,
+    mode,
+    kpis,
+  };
 }
 
 // =============================================================================
@@ -241,6 +375,10 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     duration: 0,
     totalCost: 0,
   };
+  const taskDurationsMs: number[] = [];
+  let rollbackCount = 0;
+  let escapedDefects = 0;
+  let humanInterventions = 0;
 
   if (dryRun) {
     console.log('[DRY RUN] Ralph loop starting (no git commits, no tracker sync)...');
@@ -273,7 +411,8 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
 
     // 0.5. Pull external tracker status updates
     if (!dryRun) {
-      await pullFromTracker(context);
+      const pullResult = await pullFromTracker(context);
+      humanInterventions += pullResult.conflicts;
     } else {
       if (config.tracker.autoPull) {
         console.log('  [DRY RUN] Would pull tracker status updates');
@@ -307,6 +446,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     await updateTaskStatus(context, task.id, 'in_progress');
 
     // 4. Execute task loop
+    const taskStartTime = Date.now();
     const taskResult = await executeTaskLoop(context, task, result.totalCost);
     result.totalIterations += taskResult.iterations;
     result.totalCost += taskResult.cost;
@@ -323,6 +463,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
         result.tasksCompleted++;
       } else {
         // Policy checks failed — treat as task failure
+        escapedDefects++;
         taskSuccess = false;
         console.log(`  Task ${task.id} succeeded but policy checks failed`);
       }
@@ -331,6 +472,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     if (!taskSuccess && !taskResult.success) {
       // Rollback sandbox to discard failed task's pending changes
       executor.rollback();
+      rollbackCount++;
       console.log(`  Sandbox rolled back for failed task ${task.id}`);
 
       if (config.loop.onFailure === 'retry') {
@@ -352,6 +494,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
               result.tasksCompleted++;
               taskSuccess = true;
             } else {
+              escapedDefects++;
               console.log(`  Retry attempt ${attempt} succeeded but policy checks failed`);
               // Continue to next retry attempt
             }
@@ -360,6 +503,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
           } else {
             // Rollback between retry attempts
             executor.rollback();
+            rollbackCount++;
             console.log(`  Retry attempt ${attempt} failed: ${retryResult.reason}`);
           }
         }
@@ -385,6 +529,8 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
       }
     }
 
+    taskDurationsMs.push(Date.now() - taskStartTime);
+
     // Hook: onTaskEnd
     invokeHook(context.hooks, 'onTaskEnd', task, taskSuccess);
 
@@ -407,6 +553,52 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
 
   result.duration = Date.now() - startTime;
 
+  // Phase 44 invariant validation (delivery mode gate)
+  const runKpis = computeRunKpis({
+    tasksProcessed: result.tasksProcessed,
+    tasksCompleted: result.tasksCompleted,
+    taskDurationsMs,
+    rollbackCount,
+    escapedDefects,
+    humanInterventions,
+    maxTimePerTaskMs: config.loop.maxTimePerTask,
+  });
+  const mode = policy?.mode ?? 'core';
+  const invariant = validateInductionInvariant(runKpis, mode);
+
+  if (invariant.passed) {
+    await appendJsonl(executor, './state/progress.jsonl', {
+      type: 'induction_invariant_validated',
+      mode: invariant.mode,
+      enforced: invariant.enforced,
+      kpis: invariant.kpis,
+      timestamp: new Date().toISOString(),
+    } as ProgressEvent);
+  } else {
+    await appendJsonl(executor, './state/progress.jsonl', {
+      type: 'induction_invariant_violation',
+      mode: invariant.mode,
+      violations: invariant.violations,
+      kpis: invariant.kpis,
+      timestamp: new Date().toISOString(),
+    } as ProgressEvent);
+
+    const anomalyEvent = {
+      type: 'anomaly_detected',
+      anomaly: 'induction_invariant_violation',
+      severity: 'high',
+      context: {
+        mode: invariant.mode,
+        violations: invariant.violations,
+        kpis: invariant.kpis,
+      },
+      timestamp: new Date().toISOString(),
+    };
+    await appendJsonl(executor, './state/learning.jsonl', anomalyEvent);
+    invokeHook(context.hooks, 'onAnomaly', anomalyEvent);
+    await notifyAnomaly(anomalyEvent, config.notifications).catch(() => {});
+  }
+
   console.log('\nRalph loop complete:');
   console.log(`  Tasks processed: ${result.tasksProcessed}`);
   console.log(`  Tasks completed: ${result.tasksCompleted}`);
@@ -414,6 +606,12 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
   console.log(`  Total iterations: ${result.totalIterations}`);
   console.log(`  Total cost: $${result.totalCost.toFixed(4)}`);
   console.log(`  Duration: ${(result.duration / 1000).toFixed(1)}s`);
+  console.log(`  Invariant (${invariant.mode}${invariant.enforced ? ', enforced' : ', advisory'}): ${invariant.passed ? 'PASS' : 'FAIL'}`);
+  if (!invariant.passed) {
+    for (const violation of invariant.violations) {
+      console.log(`    - ${violation}`);
+    }
+  }
 
   return result;
 }

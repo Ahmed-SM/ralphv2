@@ -270,6 +270,38 @@ Multiple independent tasks in parallel:
 - Separate sandboxes
 - Merge results
 
+## Induction Invariant Contract (Phase 44)
+
+System-level contract:
+
+"Given only repo + markdown specs + policies, Ralph can deliver a scoped feature safely, with measurable quality."
+
+Runtime validation is encoded in `runtime/loop.ts` and evaluated at the end of each loop run.
+
+KPI set per run:
+
+- Success rate (`tasksCompleted / tasksProcessed`)
+- Cycle time (average task cycle time in ms)
+- Escaped defects (task completions that fail policy checks)
+- Rollback rate (`rollbackCount / tasksProcessed`)
+- Human interventions (tracker conflict events during pull sync)
+
+Delivery-mode validation thresholds:
+
+- success rate `>= 0.80`
+- cycle time `<= loop.maxTimePerTask`
+- escaped defects `= 0`
+- rollback rate `<= 0.30`
+- human interventions `<= max(1, ceil(tasksProcessed * 0.20))`
+
+Validation events:
+
+- `induction_invariant_validated` → appended to `state/progress.jsonl`
+- `induction_invariant_violation` → appended to `state/progress.jsonl`
+- violation anomaly (`anomaly_detected`) → appended to `state/learning.jsonl`
+
+In `core` mode, invariant output is recorded in advisory mode (not enforced).
+
 ## Configuration
 
 ```json

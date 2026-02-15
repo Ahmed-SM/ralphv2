@@ -43,6 +43,9 @@ See: [implementation-plan.md](./implementation-plan.md)
 | [specs/learning-system.md](./specs/learning-system.md) | How Ralph learns and improves |
 | [specs/loop-mechanics.md](./specs/loop-mechanics.md) | The Ralph-loop execution model |
 | [specs/policy-engine.md](./specs/policy-engine.md) | Policy schema and safety gates |
+| [specs/multi-run-consensus.md](./specs/multi-run-consensus.md) | Leader lease, task claims, and run coordination |
+| [specs/state-atomicity.md](./specs/state-atomicity.md) | Atomic append/CAS semantics for JSONL state |
+| [specs/tracker-idempotency.md](./specs/tracker-idempotency.md) | Exactly-once style tracker operations |
 
 ## Integration Index
 
