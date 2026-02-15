@@ -197,7 +197,8 @@ export type LearningEvent =
   | PatternDetectedEvent
   | ImprovementProposedEvent
   | ImprovementAppliedEvent
-  | AnomalyDetectedEvent;
+  | AnomalyDetectedEvent
+  | TrackerConflictEvent;
 
 export interface TaskCompletedEvent {
   type: 'task_completed';
@@ -261,6 +262,17 @@ export interface AnomalyDetectedEvent {
   anomaly: string;
   severity: 'low' | 'medium' | 'high';
   context: Record<string, unknown>;
+  timestamp: string;
+}
+
+export interface TrackerConflictEvent {
+  type: 'tracker_conflict';
+  taskId: string;
+  field: 'status' | 'description';
+  ralphValue: string;
+  trackerValue: string;
+  resolution: 'tracker_wins' | 'ralph_wins';
+  externalId: string;
   timestamp: string;
 }
 

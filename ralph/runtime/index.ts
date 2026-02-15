@@ -18,8 +18,9 @@ export { parseArgs, resolveCommand, loadConfig, dispatch, runMain, runDiscover, 
 export { checkCompletion, checkCriteria, checkTestPassing, checkFileExists, checkValidate, createCompletionContext, type CompletionCheckResult, type CompletionContext } from './completion.js';
 
 // When executed directly (tsx runtime/index.ts), run the CLI
-const isDirectExecution = process.argv[1]?.endsWith('runtime/index.ts')
-  || process.argv[1]?.endsWith('runtime/index.js');
+const scriptPath = process.argv[1]?.replace(/\\/g, '/');
+const isDirectExecution = scriptPath?.endsWith('runtime/index.ts')
+  || scriptPath?.endsWith('runtime/index.js');
 
 if (isDirectExecution) {
   dispatch(process.argv.slice(2), {

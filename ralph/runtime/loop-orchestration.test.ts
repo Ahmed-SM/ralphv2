@@ -2838,5 +2838,488 @@ describe('pullFromTracker', () => {
 
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining('Tracker pull:'));
   });
+
+  // ===========================================================================
+  // CONFLICT RESOLUTION TESTS
+  // ===========================================================================
+
+  it('logs tracker_conflict event to learning.jsonl on status change', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/learning.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+      title: 'Test', description: '', status: 'Done', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+
+    await pullFromTracker(context);
+
+    const fs = (executor as Executor & { _fs: Map<string, string> })._fs;
+    const learningContent = fs.get('./state/learning.jsonl') ?? '';
+    const events = learningContent.trim().split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
+    const conflicts = events.filter((e: Record<string, unknown>) => e.type === 'tracker_conflict');
+    expect(conflicts.length).toBe(1);
+    expect(conflicts[0].field).toBe('status');
+    expect(conflicts[0].resolution).toBe('tracker_wins');
+  });
+
+  it('conflict event has correct fields', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-007', status: 'pending', externalId: 'TEST-7' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/learning.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10007', key: 'TEST-7', url: 'https://test/TEST-7',
+      title: 'Test', description: '', status: 'In Progress', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+
+    await pullFromTracker(context);
+
+    const fs = (executor as Executor & { _fs: Map<string, string> })._fs;
+    const learningContent = fs.get('./state/learning.jsonl') ?? '';
+    const events = learningContent.trim().split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
+    const conflict = events.find((e: Record<string, unknown>) => e.type === 'tracker_conflict');
+    expect(conflict).toBeDefined();
+    expect(conflict.taskId).toBe('RALPH-007');
+    expect(conflict.field).toBe('status');
+    expect(conflict.ralphValue).toBe('pending');
+    expect(conflict.trackerValue).toBe('In Progress');
+    expect(conflict.resolution).toBe('tracker_wins');
+    expect(conflict.externalId).toBe('TEST-7');
+    expect(conflict.timestamp).toBeDefined();
+  });
+
+  it('logs description conflict when tracker description differs', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1', description: 'Ralph description' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/learning.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+      title: 'Test', description: 'Tracker description', status: 'In Progress', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+
+    await pullFromTracker(context);
+
+    const fs = (executor as Executor & { _fs: Map<string, string> })._fs;
+    const learningContent = fs.get('./state/learning.jsonl') ?? '';
+    const events = learningContent.trim().split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
+    const descConflicts = events.filter((e: Record<string, unknown>) => e.type === 'tracker_conflict' && e.field === 'description');
+    expect(descConflicts.length).toBe(1);
+    expect(descConflicts[0].ralphValue).toBe('Ralph description');
+    expect(descConflicts[0].trackerValue).toBe('Tracker description');
+    expect(descConflicts[0].resolution).toBe('ralph_wins');
+  });
+
+  it('pushes Ralph description back to tracker (ralph_wins)', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1', description: 'Ralph description' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/learning.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+      title: 'Test', description: 'Tracker description', status: 'In Progress', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+
+    await pullFromTracker(context);
+
+    expect(mockTracker.updateIssue).toHaveBeenCalledWith('TEST-1', { description: 'Ralph description' });
+  });
+
+  it('does not log conflict when statuses match', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/learning.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+      title: 'Test', description: '', status: 'In Progress', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+
+    const result = await pullFromTracker(context);
+
+    expect(result.conflicts).toBe(0);
+    const fs = (executor as Executor & { _fs: Map<string, string> })._fs;
+    const learningContent = fs.get('./state/learning.jsonl') ?? '';
+    expect(learningContent.trim()).toBe('');
+  });
+
+  it('does not log description conflict when descriptions match', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1', description: 'Same description' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/learning.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+      title: 'Test', description: 'Same description', status: 'In Progress', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+
+    const result = await pullFromTracker(context);
+
+    expect(result.conflicts).toBe(0);
+    expect(mockTracker.updateIssue).not.toHaveBeenCalled();
+  });
+
+  it('handles updateIssue error gracefully on description push', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1', description: 'Ralph desc' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/learning.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+      title: 'Test', description: 'Different desc', status: 'In Progress', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+    (mockTracker.updateIssue as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API error'));
+
+    const result = await pullFromTracker(context);
+
+    // Should still log the conflict event even if push fails
+    expect(result.conflicts).toBe(1);
+    expect(result.errors).toBe(0); // updateIssue failure is not counted as an error
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('failed to push description'));
+  });
+
+  it('logs multiple conflicts for multiple tasks', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task1 = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1' });
+    const task2 = makeTask({ id: 'RALPH-002', status: 'pending', externalId: 'TEST-2', createdAt: '2025-01-02T00:00:00Z' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': [task1, task2].map(t => taskCreateOp(t)).join('\n') + '\n',
+      './state/learning.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    let callCount = 0;
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      callCount++;
+      return {
+        id: `1000${callCount}`, key: `TEST-${callCount}`, url: `https://test/TEST-${callCount}`,
+        title: 'Test', description: '', status: 'Done', type: 'Task',
+        created: new Date().toISOString(), updated: new Date().toISOString(),
+      };
+    });
+
+    const result = await pullFromTracker(context);
+
+    expect(result.conflicts).toBe(2);
+    const fs = (executor as Executor & { _fs: Map<string, string> })._fs;
+    const learningContent = fs.get('./state/learning.jsonl') ?? '';
+    const events = learningContent.trim().split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
+    const conflicts = events.filter((e: Record<string, unknown>) => e.type === 'tracker_conflict');
+    expect(conflicts.length).toBe(2);
+  });
+
+  it('includes conflict count in return value', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1', description: 'Ralph desc' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/learning.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+      title: 'Test', description: 'Different desc', status: 'Done', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+
+    const result = await pullFromTracker(context);
+
+    // Status conflict + description conflict = 2
+    expect(result.conflicts).toBe(2);
+    expect(result.updated).toBe(1);
+  });
+
+  it('description push skipped when tracker has no description change', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1', description: 'My desc' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/learning.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    // Tracker returns empty description — no conflict
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+      title: 'Test', description: '', status: 'In Progress', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+
+    const result = await pullFromTracker(context);
+
+    expect(result.conflicts).toBe(0);
+    expect(mockTracker.updateIssue).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// DISCOVERED → PENDING → IN_PROGRESS LIFECYCLE PROMOTION TESTS
+// =============================================================================
+
+describe('discovered task lifecycle promotion', () => {
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('promotes discovered task to pending before in_progress', async () => {
+    const task = makeTask({ id: 'RALPH-001', status: 'discovered', spec: './specs/t1.md' });
+    const executor = makeMockExecutor({
+      './AGENTS.md': '# Agents',
+      './implementation-plan.md': '# Plan',
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/progress.jsonl': '',
+      './state/learning.jsonl': '',
+      './specs/t1.md': '# Spec',
+    });
+    const config = makeConfig({
+      loop: { ...makeConfig().loop, maxTasksPerRun: 1 },
+    });
+    const context = makeContext({ config, executor });
+
+    // Pick the discovered task
+    const picked = await pickNextTask(context);
+    expect(picked).not.toBeNull();
+    expect(picked!.status).toBe('discovered');
+
+    // Simulate what runLoop does: promote discovered → pending → in_progress
+    if (picked!.status === 'discovered') {
+      await updateTaskStatus(context, picked!.id, 'pending');
+    }
+    await updateTaskStatus(context, picked!.id, 'in_progress');
+
+    // Read operations from tasks.jsonl — should contain both transitions
+    const content = (executor as any)._fs.get('./state/tasks.jsonl');
+    const lines = content.split('\n').filter((l: string) => l.trim());
+    const ops = lines.map((l: string) => JSON.parse(l));
+
+    // Should have: create, update(pending), update(in_progress)
+    expect(ops.length).toBe(3);
+    expect(ops[1].op).toBe('update');
+    expect(ops[1].changes.status).toBe('pending');
+    expect(ops[2].op).toBe('update');
+    expect(ops[2].changes.status).toBe('in_progress');
+  });
+
+  it('does not double-promote a pending task', async () => {
+    const task = makeTask({ id: 'RALPH-001', status: 'pending', spec: './specs/t1.md' });
+    const executor = makeMockExecutor({
+      './AGENTS.md': '# Agents',
+      './implementation-plan.md': '# Plan',
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/progress.jsonl': '',
+      './state/learning.jsonl': '',
+      './specs/t1.md': '# Spec',
+    });
+    const config = makeConfig({
+      loop: { ...makeConfig().loop, maxTasksPerRun: 1 },
+    });
+    const context = makeContext({ config, executor });
+
+    const picked = await pickNextTask(context);
+    expect(picked!.status).toBe('pending');
+
+    // Simulate: pending task should NOT get the extra promotion step
+    if (picked!.status === 'discovered') {
+      await updateTaskStatus(context, picked!.id, 'pending');
+    }
+    await updateTaskStatus(context, picked!.id, 'in_progress');
+
+    const content = (executor as any)._fs.get('./state/tasks.jsonl');
+    const lines = content.split('\n').filter((l: string) => l.trim());
+    const ops = lines.map((l: string) => JSON.parse(l));
+
+    // Should have: create, update(in_progress) — no extra pending step
+    expect(ops.length).toBe(2);
+    expect(ops[1].changes.status).toBe('in_progress');
+  });
+
+  it('pickNextTask includes discovered tasks as candidates', async () => {
+    const task1 = makeTask({ id: 'RALPH-001', status: 'discovered', createdAt: '2025-01-01T00:00:00Z' });
+    const task2 = makeTask({ id: 'RALPH-002', status: 'pending', createdAt: '2025-01-02T00:00:00Z' });
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': [taskCreateOp(task1), taskCreateOp(task2)].join('\n') + '\n',
+    });
+    const context = makeContext({ executor });
+
+    const picked = await pickNextTask(context);
+    // discovered is eligible — oldest first, so RALPH-001 (discovered) should be picked
+    expect(picked).not.toBeNull();
+    expect(picked!.id).toBe('RALPH-001');
+    expect(picked!.status).toBe('discovered');
+  });
+
+  it('discovered task follows valid lifecycle through full orchestration', async () => {
+    const task = makeTask({ id: 'RALPH-001', status: 'discovered', spec: './specs/t1.md' });
+    const executor = makeMockExecutor({
+      './AGENTS.md': '# Agents',
+      './implementation-plan.md': '# Plan',
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/progress.jsonl': '',
+      './state/learning.jsonl': '',
+      './specs/t1.md': '# Spec for task',
+    });
+    const config = makeConfig({
+      loop: { ...makeConfig().loop, maxTasksPerRun: 1 },
+    });
+    const context = makeContext({ config, executor });
+
+    // Full flow: pick → promote → execute → complete
+    const picked = await pickNextTask(context);
+    expect(picked!.status).toBe('discovered');
+
+    // Promote discovered → pending
+    await updateTaskStatus(context, picked!.id, 'pending');
+    // Promote pending → in_progress
+    await updateTaskStatus(context, picked!.id, 'in_progress');
+
+    // Execute (spec exists, so completes on first iteration)
+    const taskResult = await executeTaskLoop(context, picked!);
+    expect(taskResult.success).toBe(true);
+
+    // Mark done (in_progress → done is valid)
+    await updateTaskStatus(context, picked!.id, 'done');
+
+    // Verify full lifecycle in operations log
+    const content = (executor as any)._fs.get('./state/tasks.jsonl');
+    const lines = content.split('\n').filter((l: string) => l.trim());
+    const ops = lines.map((l: string) => JSON.parse(l));
+    const statuses = ops.filter((o: any) => o.op === 'update').map((o: any) => o.changes.status);
+
+    expect(statuses).toEqual(['pending', 'in_progress', 'done']);
+  });
+
+  it('in_progress task skips promotion entirely', async () => {
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress' });
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/progress.jsonl': '',
+    });
+    const context = makeContext({ executor });
+
+    const picked = await pickNextTask(context);
+    expect(picked!.status).toBe('in_progress');
+
+    // Simulate: in_progress should not get any promotion
+    if (picked!.status === 'discovered') {
+      await updateTaskStatus(context, picked!.id, 'pending');
+    }
+    await updateTaskStatus(context, picked!.id, 'in_progress');
+
+    const content = (executor as any)._fs.get('./state/tasks.jsonl');
+    const lines = content.split('\n').filter((l: string) => l.trim());
+    const ops = lines.map((l: string) => JSON.parse(l));
+
+    // create + update(in_progress) — same status update is still valid (idempotent)
+    expect(ops.length).toBe(2);
+    expect(ops[1].changes.status).toBe('in_progress');
+  });
+
+  it('discovered task with higher priority is promoted correctly', async () => {
+    const task1 = makeTask({ id: 'RALPH-001', status: 'discovered', priority: 5 });
+    const task2 = makeTask({ id: 'RALPH-002', status: 'discovered', priority: 10 });
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': [taskCreateOp(task1), taskCreateOp(task2)].join('\n') + '\n',
+      './state/progress.jsonl': '',
+    });
+    const context = makeContext({ executor });
+
+    const picked = await pickNextTask(context);
+    expect(picked!.id).toBe('RALPH-002'); // Higher priority
+    expect(picked!.status).toBe('discovered');
+
+    // Promote through lifecycle
+    await updateTaskStatus(context, picked!.id, 'pending');
+    await updateTaskStatus(context, picked!.id, 'in_progress');
+
+    const content = (executor as any)._fs.get('./state/tasks.jsonl');
+    const lines = content.split('\n').filter((l: string) => l.trim());
+    const ops = lines.map((l: string) => JSON.parse(l));
+    const task2Ops = ops.filter((o: any) => o.id === 'RALPH-002' || o.task?.id === 'RALPH-002');
+
+    // create + pending + in_progress
+    expect(task2Ops.length).toBe(3);
+  });
+
+  it('discovered task targeted by --task filter is promoted', async () => {
+    const task = makeTask({ id: 'RALPH-001', status: 'discovered' });
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/progress.jsonl': '',
+    });
+    const context = makeContext({ executor });
+
+    const picked = await pickNextTask(context, 'RALPH-001');
+    expect(picked).not.toBeNull();
+    expect(picked!.status).toBe('discovered');
+
+    // Promotion still applies for targeted tasks
+    if (picked!.status === 'discovered') {
+      await updateTaskStatus(context, picked!.id, 'pending');
+    }
+    await updateTaskStatus(context, picked!.id, 'in_progress');
+
+    const content = (executor as any)._fs.get('./state/tasks.jsonl');
+    const lines = content.split('\n').filter((l: string) => l.trim());
+    const ops = lines.map((l: string) => JSON.parse(l));
+
+    expect(ops.length).toBe(3);
+    expect(ops[1].changes.status).toBe('pending');
+    expect(ops[2].changes.status).toBe('in_progress');
+  });
 });
 

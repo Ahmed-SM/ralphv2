@@ -20,6 +20,7 @@ import type {
   ProgressEvent,
   LearningEvent,
   PatternDetectedEvent,
+  TrackerConflictEvent,
   LLMProvider,
   LLMUsage,
   LLMConfig,
@@ -192,7 +193,10 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     // Hook: onTaskStart
     invokeHook(context.hooks, 'onTaskStart', task);
 
-    // 3. Mark task in progress
+    // 3. Mark task in progress (promote discovered → pending first per spec lifecycle)
+    if (task.status === 'discovered') {
+      await updateTaskStatus(context, task.id, 'pending');
+    }
     await updateTaskStatus(context, task.id, 'in_progress');
 
     // 4. Execute task loop
@@ -1101,10 +1105,10 @@ async function loadTrackerAdapter(type: string): Promise<void> {
  */
 export async function pullFromTracker(
   context: LoopContext,
-): Promise<{ updated: number; errors: number }> {
+): Promise<{ updated: number; errors: number; conflicts: number }> {
   const { config, executor } = context;
   const trackerConfig = config.tracker;
-  const result = { updated: 0, errors: 0 };
+  const result = { updated: 0, errors: 0, conflicts: 0 };
 
   if (!trackerConfig.autoPull) {
     return result;
@@ -1152,10 +1156,49 @@ export async function pullFromTracker(
         const trackerStatus = mapStatusToRalph(issue.status, fullConfig);
 
         if (trackerStatus !== task.status) {
-          // Tracker wins for status (human authority) — per spec conflict resolution
+          // Log status conflict — tracker wins (human authority)
+          const statusConflict: TrackerConflictEvent = {
+            type: 'tracker_conflict',
+            taskId: task.id,
+            field: 'status',
+            ralphValue: task.status,
+            trackerValue: issue.status,
+            resolution: 'tracker_wins',
+            externalId: task.externalId!,
+            timestamp: new Date().toISOString(),
+          };
+          await appendJsonl(executor, './state/learning.jsonl', statusConflict);
+          result.conflicts++;
+
+          // Apply the status update (tracker wins)
           await updateTaskStatus(context, task.id, trackerStatus, `tracker pull: ${issue.status}`);
           result.updated++;
           console.log(`  Tracker pull: ${task.id} ${task.status} → ${trackerStatus}`);
+        }
+
+        // Check for description conflict — ralph wins (spec is source of truth)
+        if (issue.description && issue.description !== task.description) {
+          const descConflict: TrackerConflictEvent = {
+            type: 'tracker_conflict',
+            taskId: task.id,
+            field: 'description',
+            ralphValue: task.description,
+            trackerValue: issue.description,
+            resolution: 'ralph_wins',
+            externalId: task.externalId!,
+            timestamp: new Date().toISOString(),
+          };
+          await appendJsonl(executor, './state/learning.jsonl', descConflict);
+          result.conflicts++;
+
+          // Push Ralph's description back to tracker (ralph wins)
+          try {
+            await tracker.updateIssue(task.externalId!, { description: task.description } as Partial<Task>);
+            console.log(`  Tracker pull: pushed description for ${task.id} back to tracker`);
+          } catch (pushError) {
+            const pushMsg = pushError instanceof Error ? pushError.message : 'Unknown error';
+            console.log(`  Tracker pull: failed to push description for ${task.id}: ${pushMsg}`);
+          }
         }
       } catch (error) {
         result.errors++;

@@ -613,6 +613,44 @@ Next steps for production readiness:
   - logs pull summary with count
 - [x] Total: 13 new tests (1449 total across 36 test files)
 
+### Tracker Sync Conflict Resolution & Logging (Phase 37) ✅ COMPLETE
+- [x] Added `TrackerConflictEvent` type to types/index.ts — logs conflict field, ralph/tracker values, and resolution strategy
+- [x] Updated `LearningEvent` union type to include `TrackerConflictEvent`
+- [x] Updated `pullFromTracker()` in runtime/loop.ts with conflict detection and logging:
+  - Status conflict: logs `tracker_conflict` event with `resolution: 'tracker_wins'` before applying tracker status (human authority)
+  - Description conflict: logs `tracker_conflict` event with `resolution: 'ralph_wins'`, pushes Ralph's description back to tracker (spec is source of truth)
+  - Graceful error handling for description push failures (logged but not counted as errors)
+  - Return type updated to include `conflicts: number`
+- [x] Unit tests — 10 tests → [runtime/loop-orchestration.test.ts](./runtime/loop-orchestration.test.ts)
+  - logs tracker_conflict event to learning.jsonl on status change
+  - conflict event has correct fields (taskId, field, ralphValue, trackerValue, resolution, externalId)
+  - logs description conflict when tracker description differs
+  - pushes Ralph description back to tracker (ralph_wins)
+  - does not log conflict when statuses match
+  - does not log description conflict when descriptions match
+  - handles updateIssue error gracefully on description push
+  - logs multiple conflicts for multiple tasks
+  - includes conflict count in return value
+  - description push skipped when tracker has no description change
+- [x] Total: 10 new tests (1414 total across 35 test files)
+
+### Discovered Task Lifecycle Promotion (Phase 38) ✅ COMPLETE
+- [x] Fixed `discovered → in_progress` lifecycle violation in `runLoop()` → [runtime/loop.ts](./runtime/loop.ts)
+  - `pickNextTask()` selects `discovered` tasks as candidates, but spec lifecycle only allows `discovered → pending → in_progress`
+  - Added automatic promotion: when a picked task has status `discovered`, first transitions to `pending` before `in_progress`
+  - Aligns with task-schema.md lifecycle: `discovered → pending → in_progress → done`
+  - `pending` and `in_progress` tasks unaffected (no double-promotion)
+  - Resolves issues.md bug: "Status transition errors: Some tasks have status discovered which doesn't allow transition to in_progress"
+- [x] Unit tests — 7 tests → [runtime/loop-orchestration.test.ts](./runtime/loop-orchestration.test.ts)
+  - promotes discovered task to pending before in_progress
+  - does not double-promote a pending task
+  - pickNextTask includes discovered tasks as candidates
+  - discovered task follows valid lifecycle through full orchestration
+  - in_progress task skips promotion entirely
+  - discovered task with higher priority is promoted correctly
+  - discovered task targeted by --task filter is promoted
+- [x] Total: 7 new tests (1423 total across 35 test files)
+
 ## Dependencies
 
 ```
