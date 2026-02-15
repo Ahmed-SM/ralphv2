@@ -12,13 +12,17 @@ import type { RuntimeConfig, TrackerRuntimeConfig } from '../types/index.js';
 // TYPES
 // =============================================================================
 
-export type CliCommand = 'run' | 'discover' | 'sync' | 'status' | 'learn' | 'dashboard' | 'help';
+export type CliCommand = 'run' | 'discover' | 'sync' | 'status' | 'learn' | 'dashboard' | 'review' | 'approve' | 'reject' | 'help';
 
 export interface ParsedArgs {
   command: CliCommand;
   configPath: string;
   dryRun: boolean;
   taskFilter: string | undefined;
+  /** Positional argument (e.g. proposal ID for approve/reject) */
+  positional?: string;
+  /** Reason flag (e.g. --reason=<text> for reject) */
+  reason?: string;
 }
 
 export interface CliDeps {
@@ -54,6 +58,9 @@ Commands:
   status      Show current task status
   learn       Analyze and propose improvements
   dashboard   Show learning summary report
+  review      List pending improvement proposals
+  approve     Approve and apply a proposal (ralph approve <id>)
+  reject      Reject a proposal (ralph reject <id> [--reason=<text>])
   help        Show this help
 
 Options:
@@ -69,6 +76,9 @@ Examples:
   ralph sync               # Sync with Jira only
   ralph learn              # Run learning analysis
   ralph dashboard          # Show learning summary
+  ralph review             # List pending proposals
+  ralph approve IMPROVE-001  # Approve and apply a proposal
+  ralph reject IMPROVE-001   # Reject a proposal
 `;
 
 export const BANNER = [
@@ -78,7 +88,7 @@ export const BANNER = [
   '\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d',
 ].join('\n');
 
-const VALID_COMMANDS = new Set<CliCommand>(['run', 'discover', 'sync', 'status', 'learn', 'dashboard', 'help']);
+const VALID_COMMANDS = new Set<CliCommand>(['run', 'discover', 'sync', 'status', 'learn', 'dashboard', 'review', 'approve', 'reject', 'help']);
 
 // =============================================================================
 // PARSING
@@ -99,7 +109,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const taskArg = argv.find(a => a.startsWith('--task='));
   const taskFilter = taskArg?.split('=')[1];
 
-  return { command, configPath, dryRun, taskFilter };
+  const reasonArg = argv.find(a => a.startsWith('--reason='));
+  const reason = reasonArg?.split('=').slice(1).join('=');
+
+  // Positional argument: first non-flag arg after the command
+  const positional = argv.slice(1).find(a => !a.startsWith('--'));
+
+  return { command, configPath, dryRun, taskFilter, positional, reason };
 }
 
 /**
@@ -544,6 +560,238 @@ async function loadTasksForLearning(
 }
 
 // =============================================================================
+// REVIEW / APPROVE / REJECT
+// =============================================================================
+
+/**
+ * Show all pending improvement proposals with full details.
+ */
+export async function runReview(args: ParsedArgs, deps: CliDeps): Promise<number> {
+  deps.log('Pending improvement proposals:\n');
+
+  const workDir = resolve(deps.cwd);
+  const learningPath = resolve(workDir, 'state/learning.jsonl');
+
+  const improveAgentsMod = await deps.importModule('../skills/discovery/improve-agents.js') as {
+    loadPendingProposals: (readFile: (p: string) => Promise<string>, path: string) => Promise<Array<{
+      id: string; title: string; target: string; section?: string;
+      priority: string; confidence: number; description: string;
+      rationale: string; evidence: string[]; content: string;
+    }>>;
+  };
+
+  const readFileFn = (path: string) =>
+    deps.readFile(resolve(workDir, path.replace(/^\.\//, '')), 'utf-8');
+
+  const pending = await improveAgentsMod.loadPendingProposals(readFileFn, './state/learning.jsonl');
+
+  if (pending.length === 0) {
+    deps.log('No pending proposals. Run "ralph learn" to generate proposals.');
+    return 0;
+  }
+
+  deps.log(`Found ${pending.length} pending proposal(s):\n`);
+
+  for (const p of pending) {
+    deps.log(`  [${ p.id}] ${p.title}`);
+    deps.log(`    Target:     ${p.target}${p.section ? ' > ' + p.section : ''}`);
+    deps.log(`    Priority:   ${p.priority}`);
+    deps.log(`    Confidence: ${(p.confidence * 100).toFixed(0)}%`);
+    deps.log(`    Rationale:  ${p.rationale}`);
+    if (p.evidence && p.evidence.length > 0) {
+      deps.log(`    Evidence:   ${p.evidence.join(', ')}`);
+    }
+    deps.log(`    Description: ${p.description}`);
+    deps.log('');
+  }
+
+  deps.log('To approve: ralph approve <id>');
+  deps.log('To reject:  ralph reject <id> [--reason=<text>]');
+
+  return 0;
+}
+
+/**
+ * Approve and apply a pending improvement proposal.
+ *
+ * Steps:
+ *   1. Load proposal by ID
+ *   2. Validate it's in 'pending' status
+ *   3. Set status to 'approved'
+ *   4. Apply the improvement (create branch, commit)
+ *   5. Set status to 'applied', log improvement_applied event
+ */
+export async function runApprove(args: ParsedArgs, deps: CliDeps): Promise<number> {
+  const proposalId = args.positional;
+  if (!proposalId) {
+    deps.error('Usage: ralph approve <proposal-id>');
+    deps.error('Run "ralph review" to see pending proposals.');
+    return 1;
+  }
+
+  deps.log(`Approving proposal ${proposalId}...\n`);
+
+  const workDir = resolve(deps.cwd);
+  const learningPath = './state/learning.jsonl';
+
+  const readFileFn = (path: string) =>
+    deps.readFile(resolve(workDir, path.replace(/^\.\//, '')), 'utf-8');
+  const writeFileFn = deps.writeFile
+    ? (path: string, content: string) => deps.writeFile!(resolve(workDir, path.replace(/^\.\//, '')), content)
+    : async (_path: string, _content: string) => {};
+
+  // Load modules
+  const applyMod = await deps.importModule('../skills/discovery/apply-improvements.js') as {
+    loadProposalById: (readFile: (p: string) => Promise<string>, path: string, id: string) => Promise<{
+      id: string; title: string; target: string; section?: string;
+      status: string; content: string;
+    } | null>;
+    setProposalStatus: (readFile: (p: string) => Promise<string>, writeFile: (p: string, c: string) => Promise<void>, path: string, id: string, status: string, reason?: string) => Promise<boolean>;
+    applyImprovements: (ctx: unknown, proposals: unknown[]) => Promise<{ applied: Array<{ id: string; target: string; branch: string; commit?: string; timestamp: string }>; skipped: unknown[]; errors: Array<{ id: string; error: string }> }>;
+    markProposalsApplied: (readFile: (p: string) => Promise<string>, writeFile: (p: string, c: string) => Promise<void>, path: string, applied: unknown[]) => Promise<void>;
+    updateProposalStatuses: (readFile: (p: string) => Promise<string>, writeFile: (p: string, c: string) => Promise<void>, path: string, ids: string[]) => Promise<void>;
+  };
+
+  // 1. Load proposal
+  const proposal = await applyMod.loadProposalById(readFileFn, learningPath, proposalId);
+  if (!proposal) {
+    deps.error(`Proposal "${proposalId}" not found.`);
+    deps.error('Run "ralph review" to see available proposals.');
+    return 1;
+  }
+
+  if (proposal.status !== 'pending') {
+    deps.error(`Proposal "${proposalId}" has status "${proposal.status}" — only pending proposals can be approved.`);
+    return 1;
+  }
+
+  deps.log(`  Title:  ${proposal.title}`);
+  deps.log(`  Target: ${proposal.target}${proposal.section ? ' > ' + proposal.section : ''}`);
+  deps.log('');
+
+  // 2. Mark as approved
+  const approved = await applyMod.setProposalStatus(readFileFn, writeFileFn, learningPath, proposalId, 'approved');
+  if (!approved) {
+    deps.error('Failed to update proposal status.');
+    return 1;
+  }
+  deps.log('  Status: pending → approved');
+
+  // 3. Apply the improvement (unless dry-run)
+  if (args.dryRun) {
+    deps.log('  [DRY RUN] Skipping application.');
+    return 0;
+  }
+
+  // Build ApplyContext using executor-like deps
+  const { createExecutor } = await deps.importModule('./executor.js') as {
+    createExecutor: (config: unknown) => {
+      readFile: (path: string) => Promise<string>;
+      writeFile: (path: string, content: string) => Promise<void>;
+      git: {
+        branch: (name: string) => Promise<string>;
+        checkout: (ref: string) => Promise<void>;
+        add: (files: string | string[]) => Promise<void>;
+        commit: (message: string) => Promise<string>;
+        currentBranch: () => Promise<string>;
+      };
+    };
+  };
+
+  const config = await loadConfig(resolve(workDir, args.configPath), deps.readFile);
+  const executor = createExecutor({ config: config.sandbox, workDir });
+
+  const applyContext = {
+    readFile: (path: string) => executor.readFile(path),
+    writeFile: (path: string, content: string) => executor.writeFile(path, content),
+    gitBranch: (name: string) => executor.git.branch(name),
+    gitCheckout: (ref: string) => executor.git.checkout(ref),
+    gitAdd: (files: string | string[]) => executor.git.add(files),
+    gitCommit: (message: string) => executor.git.commit(message),
+    gitCurrentBranch: () => executor.git.currentBranch(),
+  };
+
+  const result = await applyMod.applyImprovements(applyContext, [proposal]);
+
+  if (result.applied.length > 0) {
+    // 4. Mark as applied and log event
+    await applyMod.markProposalsApplied(readFileFn, writeFileFn, learningPath, result.applied);
+    await applyMod.updateProposalStatuses(readFileFn, writeFileFn, learningPath, [proposalId]);
+    deps.log(`  Applied on branch: ${result.applied[0].branch}`);
+    deps.log(`  Status: approved → applied`);
+    deps.log(`\nProposal ${proposalId} approved and applied successfully.`);
+    return 0;
+  }
+
+  if (result.errors.length > 0) {
+    deps.error(`  Application failed: ${result.errors[0].error}`);
+    deps.error('Proposal was approved but could not be applied. Status remains "approved".');
+    return 1;
+  }
+
+  deps.log('Proposal approved (no changes to apply).');
+  return 0;
+}
+
+/**
+ * Reject a pending improvement proposal with an optional reason.
+ */
+export async function runReject(args: ParsedArgs, deps: CliDeps): Promise<number> {
+  const proposalId = args.positional;
+  if (!proposalId) {
+    deps.error('Usage: ralph reject <proposal-id> [--reason=<text>]');
+    deps.error('Run "ralph review" to see pending proposals.');
+    return 1;
+  }
+
+  deps.log(`Rejecting proposal ${proposalId}...\n`);
+
+  const workDir = resolve(deps.cwd);
+  const learningPath = './state/learning.jsonl';
+
+  const readFileFn = (path: string) =>
+    deps.readFile(resolve(workDir, path.replace(/^\.\//, '')), 'utf-8');
+  const writeFileFn = deps.writeFile
+    ? (path: string, content: string) => deps.writeFile!(resolve(workDir, path.replace(/^\.\//, '')), content)
+    : async (_path: string, _content: string) => {};
+
+  const applyMod = await deps.importModule('../skills/discovery/apply-improvements.js') as {
+    loadProposalById: (readFile: (p: string) => Promise<string>, path: string, id: string) => Promise<{
+      id: string; title: string; status: string;
+    } | null>;
+    setProposalStatus: (readFile: (p: string) => Promise<string>, writeFile: (p: string, c: string) => Promise<void>, path: string, id: string, status: string, reason?: string) => Promise<boolean>;
+  };
+
+  // 1. Load proposal
+  const proposal = await applyMod.loadProposalById(readFileFn, learningPath, proposalId);
+  if (!proposal) {
+    deps.error(`Proposal "${proposalId}" not found.`);
+    deps.error('Run "ralph review" to see available proposals.');
+    return 1;
+  }
+
+  if (proposal.status !== 'pending') {
+    deps.error(`Proposal "${proposalId}" has status "${proposal.status}" — only pending proposals can be rejected.`);
+    return 1;
+  }
+
+  // 2. Mark as rejected
+  const rejected = await applyMod.setProposalStatus(readFileFn, writeFileFn, learningPath, proposalId, 'rejected', args.reason);
+  if (!rejected) {
+    deps.error('Failed to update proposal status.');
+    return 1;
+  }
+
+  deps.log(`  Title:  ${proposal.title}`);
+  deps.log(`  Status: pending → rejected`);
+  if (args.reason) {
+    deps.log(`  Reason: ${args.reason}`);
+  }
+  deps.log(`\nProposal ${proposalId} rejected.`);
+  return 0;
+}
+
+// =============================================================================
 // DASHBOARD
 // =============================================================================
 
@@ -882,6 +1130,15 @@ export async function dispatch(argv: string[], deps: CliDeps): Promise<number> {
 
     case 'dashboard':
       return runDashboard(args, deps);
+
+    case 'review':
+      return runReview(args, deps);
+
+    case 'approve':
+      return runApprove(args, deps);
+
+    case 'reject':
+      return runReject(args, deps);
 
     case 'help':
       deps.log(HELP_TEXT);

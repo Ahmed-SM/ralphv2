@@ -7,6 +7,8 @@ import {
   applyImprovements,
   markProposalsApplied,
   updateProposalStatuses,
+  setProposalStatus,
+  loadProposalById,
   type ApplyContext,
   type ApplyResult,
 } from './apply-improvements.js';
@@ -503,6 +505,168 @@ describe('updateProposalStatuses', () => {
 
     const written = writeFn.mock.calls[0][1];
     expect(written).toContain('not json');
+  });
+});
+
+// =============================================================================
+// setProposalStatus
+// =============================================================================
+
+describe('setProposalStatus', () => {
+  it('updates a pending proposal to approved', async () => {
+    const original = JSON.stringify({ eventType: 'improvement_proposed', id: 'IMPROVE-001', status: 'pending', title: 'test' });
+    const readFn = vi.fn(async () => original + '\n');
+    const writeFn = vi.fn(async () => {});
+
+    const found = await setProposalStatus(readFn, writeFn, 'path', 'IMPROVE-001', 'approved');
+
+    expect(found).toBe(true);
+    const written = writeFn.mock.calls[0][1];
+    const parsed = JSON.parse(written.trim());
+    expect(parsed.status).toBe('approved');
+    expect(parsed.updatedAt).toBeDefined();
+  });
+
+  it('updates a pending proposal to rejected', async () => {
+    const original = JSON.stringify({ eventType: 'improvement_proposed', id: 'IMPROVE-001', status: 'pending', title: 'test' });
+    const readFn = vi.fn(async () => original + '\n');
+    const writeFn = vi.fn(async () => {});
+
+    const found = await setProposalStatus(readFn, writeFn, 'path', 'IMPROVE-001', 'rejected');
+
+    expect(found).toBe(true);
+    const parsed = JSON.parse(writeFn.mock.calls[0][1].trim());
+    expect(parsed.status).toBe('rejected');
+  });
+
+  it('includes reason when provided', async () => {
+    const original = JSON.stringify({ eventType: 'improvement_proposed', id: 'IMPROVE-001', status: 'pending' });
+    const readFn = vi.fn(async () => original + '\n');
+    const writeFn = vi.fn(async () => {});
+
+    await setProposalStatus(readFn, writeFn, 'path', 'IMPROVE-001', 'rejected', 'Not applicable');
+
+    const parsed = JSON.parse(writeFn.mock.calls[0][1].trim());
+    expect(parsed.reason).toBe('Not applicable');
+  });
+
+  it('returns false when proposal not found', async () => {
+    const readFn = vi.fn(async () => JSON.stringify({ eventType: 'improvement_proposed', id: 'OTHER', status: 'pending' }) + '\n');
+    const writeFn = vi.fn(async () => {});
+
+    const found = await setProposalStatus(readFn, writeFn, 'path', 'IMPROVE-001', 'approved');
+
+    expect(found).toBe(false);
+    expect(writeFn).not.toHaveBeenCalled();
+  });
+
+  it('returns false when file is missing', async () => {
+    const readFn = vi.fn(async () => { throw new Error('ENOENT'); });
+    const writeFn = vi.fn(async () => {});
+
+    const found = await setProposalStatus(readFn, writeFn, 'path', 'IMPROVE-001', 'approved');
+
+    expect(found).toBe(false);
+    expect(writeFn).not.toHaveBeenCalled();
+  });
+
+  it('does not update non-pending proposals', async () => {
+    const original = JSON.stringify({ eventType: 'improvement_proposed', id: 'IMPROVE-001', status: 'applied' });
+    const readFn = vi.fn(async () => original + '\n');
+    const writeFn = vi.fn(async () => {});
+
+    const found = await setProposalStatus(readFn, writeFn, 'path', 'IMPROVE-001', 'approved');
+
+    expect(found).toBe(false);
+  });
+
+  it('preserves other events in the file', async () => {
+    const line1 = JSON.stringify({ eventType: 'improvement_proposed', id: 'IMPROVE-001', status: 'pending' });
+    const line2 = JSON.stringify({ type: 'task_completed', taskId: 'R-001' });
+    const readFn = vi.fn(async () => line1 + '\n' + line2 + '\n');
+    const writeFn = vi.fn(async () => {});
+
+    await setProposalStatus(readFn, writeFn, 'path', 'IMPROVE-001', 'rejected');
+
+    const written = writeFn.mock.calls[0][1];
+    const lines = written.split('\n').filter((l: string) => l.trim());
+    expect(JSON.parse(lines[0]).status).toBe('rejected');
+    expect(JSON.parse(lines[1]).type).toBe('task_completed');
+  });
+
+  it('adds updatedAt timestamp', async () => {
+    const original = JSON.stringify({ eventType: 'improvement_proposed', id: 'IMPROVE-001', status: 'pending' });
+    const readFn = vi.fn(async () => original + '\n');
+    const writeFn = vi.fn(async () => {});
+
+    await setProposalStatus(readFn, writeFn, 'path', 'IMPROVE-001', 'approved');
+
+    const parsed = JSON.parse(writeFn.mock.calls[0][1].trim());
+    expect(parsed.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+// =============================================================================
+// loadProposalById
+// =============================================================================
+
+describe('loadProposalById', () => {
+  it('returns the matching proposal', async () => {
+    const proposal = JSON.stringify({
+      eventType: 'improvement_proposed', id: 'IMPROVE-001', target: 'AGENTS.md',
+      title: 'Test', status: 'pending', type: 'add_section', description: 'desc',
+      content: 'content', rationale: 'rationale', evidence: ['e1'], confidence: 0.8,
+      priority: 'high', createdAt: '2024-01-01T00:00:00Z',
+    });
+    const readFn = vi.fn(async () => proposal + '\n');
+
+    const result = await loadProposalById(readFn, 'path', 'IMPROVE-001');
+
+    expect(result).not.toBeNull();
+    expect(result!.id).toBe('IMPROVE-001');
+    expect(result!.title).toBe('Test');
+    expect(result!.target).toBe('AGENTS.md');
+    expect(result!.status).toBe('pending');
+  });
+
+  it('returns null when proposal not found', async () => {
+    const readFn = vi.fn(async () => JSON.stringify({ eventType: 'improvement_proposed', id: 'OTHER', status: 'pending' }) + '\n');
+
+    const result = await loadProposalById(readFn, 'path', 'IMPROVE-001');
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null when file is empty', async () => {
+    const readFn = vi.fn(async () => '');
+    const result = await loadProposalById(readFn, 'path', 'IMPROVE-001');
+    expect(result).toBeNull();
+  });
+
+  it('returns null when file is missing', async () => {
+    const readFn = vi.fn(async () => { throw new Error('ENOENT'); });
+    const result = await loadProposalById(readFn, 'path', 'IMPROVE-001');
+    expect(result).toBeNull();
+  });
+
+  it('skips non-JSON lines', async () => {
+    const proposal = JSON.stringify({ eventType: 'improvement_proposed', id: 'IMPROVE-001', status: 'pending', title: 'X' });
+    const readFn = vi.fn(async () => 'not json\n' + proposal + '\n');
+
+    const result = await loadProposalById(readFn, 'path', 'IMPROVE-001');
+
+    expect(result).not.toBeNull();
+    expect(result!.id).toBe('IMPROVE-001');
+  });
+
+  it('returns proposal regardless of status', async () => {
+    const proposal = JSON.stringify({ eventType: 'improvement_proposed', id: 'IMPROVE-001', status: 'applied', title: 'Done' });
+    const readFn = vi.fn(async () => proposal + '\n');
+
+    const result = await loadProposalById(readFn, 'path', 'IMPROVE-001');
+
+    expect(result).not.toBeNull();
+    expect(result!.status).toBe('applied');
   });
 });
 

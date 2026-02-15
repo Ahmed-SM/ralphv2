@@ -353,3 +353,94 @@ export async function updateProposalStatuses(
 
   await writeFile(learningPath, updatedLines.join('\n'));
 }
+
+/**
+ * Update a single proposal's status in learning.jsonl.
+ *
+ * Generic status transition: pending → approved | rejected | applied
+ * Returns true if the proposal was found and updated, false otherwise.
+ */
+export async function setProposalStatus(
+  readFile: (path: string) => Promise<string>,
+  writeFile: (path: string, content: string) => Promise<void>,
+  learningPath: string,
+  proposalId: string,
+  newStatus: 'approved' | 'rejected' | 'applied',
+  reason?: string,
+): Promise<boolean> {
+  let content: string;
+  try {
+    content = await readFile(learningPath);
+  } catch {
+    return false; // File doesn't exist — nothing to update
+  }
+
+  let found = false;
+  const lines = content.split('\n');
+  const updatedLines = lines.map(line => {
+    if (!line.trim()) return line;
+    try {
+      const event = JSON.parse(line);
+      if (event.eventType === 'improvement_proposed' && event.id === proposalId) {
+        if (event.status !== 'pending') return line; // Only transition from pending
+        event.status = newStatus;
+        if (reason) event.reason = reason;
+        event.updatedAt = new Date().toISOString();
+        found = true;
+        return JSON.stringify(event);
+      }
+    } catch {
+      // Not JSON, keep as-is
+    }
+    return line;
+  });
+
+  if (!found) return false;
+
+  await writeFile(learningPath, updatedLines.join('\n'));
+  return true;
+}
+
+/**
+ * Load a single proposal by ID from learning.jsonl.
+ * Returns null if not found.
+ */
+export async function loadProposalById(
+  readFile: (path: string) => Promise<string>,
+  learningPath: string,
+  proposalId: string,
+): Promise<ImprovementProposal | null> {
+  try {
+    const content = await readFile(learningPath);
+    if (!content.trim()) return null;
+
+    for (const line of content.trim().split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line);
+        if (event.eventType === 'improvement_proposed' && event.id === proposalId) {
+          return {
+            id: event.id,
+            target: event.target,
+            section: event.section,
+            type: event.type,
+            title: event.title,
+            description: event.description,
+            content: event.content,
+            rationale: event.rationale,
+            evidence: event.evidence,
+            confidence: event.confidence,
+            priority: event.priority,
+            status: event.status,
+            createdAt: event.createdAt,
+          } as ImprovementProposal;
+        }
+      } catch {
+        // Not JSON, skip
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}

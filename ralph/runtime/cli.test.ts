@@ -10,6 +10,9 @@ import {
   runSync,
   runLearn,
   runDashboard,
+  runReview,
+  runApprove,
+  runReject,
   buildDashboardData,
   formatDashboard,
   loadConfig,
@@ -572,6 +575,9 @@ describe('constants', () => {
     expect(HELP_TEXT).toContain('sync');
     expect(HELP_TEXT).toContain('status');
     expect(HELP_TEXT).toContain('learn');
+    expect(HELP_TEXT).toContain('review');
+    expect(HELP_TEXT).toContain('approve');
+    expect(HELP_TEXT).toContain('reject');
     expect(HELP_TEXT).toContain('help');
   });
 
@@ -1751,5 +1757,450 @@ describe('parseArgs — dashboard', () => {
 describe('resolveCommand — dashboard', () => {
   it('passes through dashboard command', () => {
     expect(resolveCommand('dashboard')).toBe('dashboard');
+  });
+});
+
+// =============================================================================
+// parseArgs — review/approve/reject
+// =============================================================================
+
+describe('parseArgs — review/approve/reject', () => {
+  it('parses review command', () => {
+    const result = parseArgs(['review']);
+    expect(result.command).toBe('review');
+  });
+
+  it('parses approve command with positional ID', () => {
+    const result = parseArgs(['approve', 'IMPROVE-001']);
+    expect(result.command).toBe('approve');
+    expect(result.positional).toBe('IMPROVE-001');
+  });
+
+  it('parses reject command with positional ID', () => {
+    const result = parseArgs(['reject', 'IMPROVE-002']);
+    expect(result.command).toBe('reject');
+    expect(result.positional).toBe('IMPROVE-002');
+  });
+
+  it('parses reject with --reason flag', () => {
+    const result = parseArgs(['reject', 'IMPROVE-001', '--reason=Not applicable now']);
+    expect(result.command).toBe('reject');
+    expect(result.positional).toBe('IMPROVE-001');
+    expect(result.reason).toBe('Not applicable now');
+  });
+
+  it('parses reason with equals sign in value', () => {
+    const result = parseArgs(['reject', 'IMPROVE-001', '--reason=x=y']);
+    expect(result.reason).toBe('x=y');
+  });
+
+  it('positional is undefined when no ID given', () => {
+    const result = parseArgs(['approve']);
+    expect(result.positional).toBeUndefined();
+  });
+
+  it('positional skips flags', () => {
+    const result = parseArgs(['approve', '--dry-run', 'IMPROVE-001']);
+    expect(result.positional).toBe('IMPROVE-001');
+  });
+});
+
+// =============================================================================
+// resolveCommand — review/approve/reject
+// =============================================================================
+
+describe('resolveCommand — review/approve/reject', () => {
+  it('passes through review command', () => {
+    expect(resolveCommand('review')).toBe('review');
+  });
+
+  it('passes through approve command', () => {
+    expect(resolveCommand('approve')).toBe('approve');
+  });
+
+  it('passes through reject command', () => {
+    expect(resolveCommand('reject')).toBe('reject');
+  });
+});
+
+// =============================================================================
+// runReview
+// =============================================================================
+
+function makeReviewDeps(overrides: {
+  pendingProposals?: Array<Record<string, unknown>>;
+} = {}): CliDeps {
+  const proposals = overrides.pendingProposals ?? [];
+
+  const mockLoadPendingProposals = vi.fn().mockResolvedValue(proposals);
+
+  const importModule = vi.fn().mockImplementation(async (specifier: string) => {
+    if (specifier === '../skills/discovery/improve-agents.js') return {
+      loadPendingProposals: mockLoadPendingProposals,
+    };
+    throw new Error(`Unexpected import: ${specifier}`);
+  });
+
+  return makeDeps({
+    readFile: vi.fn().mockResolvedValue(''),
+    importModule,
+  });
+}
+
+describe('runReview', () => {
+  it('logs header', async () => {
+    const deps = makeReviewDeps();
+    const args: ParsedArgs = { command: 'review', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runReview(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Pending improvement proposals');
+  });
+
+  it('shows message when no proposals exist', async () => {
+    const deps = makeReviewDeps({ pendingProposals: [] });
+    const args: ParsedArgs = { command: 'review', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runReview(args, deps);
+
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('No pending proposals');
+  });
+
+  it('displays proposals with details', async () => {
+    const deps = makeReviewDeps({
+      pendingProposals: [
+        { id: 'IMPROVE-001', title: 'Add multiplier', target: 'AGENTS.md', section: 'Estimation', priority: 'high', confidence: 0.9, description: 'desc', rationale: 'improve', evidence: ['e1', 'e2'], content: 'x' },
+        { id: 'IMPROVE-002', title: 'Flag risk area', target: 'AGENTS.md', priority: 'medium', confidence: 0.75, description: 'desc2', rationale: 'risk', evidence: [], content: 'y' },
+      ],
+    });
+    const args: ParsedArgs = { command: 'review', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runReview(args, deps);
+
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Found 2 pending proposal(s)');
+    expect(logged).toContain('IMPROVE-001');
+    expect(logged).toContain('Add multiplier');
+    expect(logged).toContain('AGENTS.md');
+    expect(logged).toContain('Estimation');
+    expect(logged).toContain('90%');
+    expect(logged).toContain('high');
+    expect(logged).toContain('IMPROVE-002');
+    expect(logged).toContain('ralph approve');
+    expect(logged).toContain('ralph reject');
+  });
+
+  it('works via dispatch', async () => {
+    const deps = makeReviewDeps({ pendingProposals: [] });
+    const code = await dispatch(['review'], deps);
+    expect(code).toBe(0);
+  });
+});
+
+// =============================================================================
+// runApprove
+// =============================================================================
+
+function makeApproveDeps(overrides: {
+  proposal?: Record<string, unknown> | null;
+  setProposalStatus?: ReturnType<typeof vi.fn>;
+  applyResult?: Record<string, unknown>;
+  createExecutor?: ReturnType<typeof vi.fn>;
+  configJson?: string;
+} = {}): CliDeps {
+  const mockLoadProposalById = vi.fn().mockResolvedValue(
+    'proposal' in overrides ? overrides.proposal : {
+      id: 'IMPROVE-001', title: 'Test proposal', target: 'AGENTS.md', section: 'Test',
+      status: 'pending', content: 'content', type: 'add_section',
+    }
+  );
+
+  const mockSetProposalStatus = overrides.setProposalStatus ?? vi.fn().mockResolvedValue(true);
+
+  const defaultApplyResult = {
+    applied: [{ id: 'IMPROVE-001', target: 'AGENTS.md', branch: 'ralph/learn-2024-01-15', commit: 'abc', timestamp: '2024-01-15T00:00:00Z' }],
+    skipped: [],
+    errors: [],
+  };
+  const mockApplyImprovements = vi.fn().mockResolvedValue(overrides.applyResult ?? defaultApplyResult);
+  const mockMarkProposalsApplied = vi.fn().mockResolvedValue(undefined);
+  const mockUpdateProposalStatuses = vi.fn().mockResolvedValue(undefined);
+
+  const mockExecutor = {
+    readFile: vi.fn(async () => '# AGENTS.md\n'),
+    writeFile: vi.fn(async () => {}),
+    git: {
+      branch: vi.fn(async () => 'ralph/learn-test'),
+      checkout: vi.fn(async () => {}),
+      add: vi.fn(async () => {}),
+      commit: vi.fn(async () => 'abc123'),
+      currentBranch: vi.fn(async () => 'main'),
+    },
+  };
+  const mockCreateExecutor = overrides.createExecutor ?? vi.fn().mockReturnValue(mockExecutor);
+
+  const configContent = overrides.configJson ?? MINIMAL_CONFIG;
+
+  const readFile = vi.fn().mockImplementation(async (path: string) => {
+    if (path.endsWith('ralph.config.json')) return configContent;
+    if (path.endsWith('learning.jsonl')) return '';
+    return '';
+  });
+
+  const importModule = vi.fn().mockImplementation(async (specifier: string) => {
+    if (specifier === '../skills/discovery/apply-improvements.js') return {
+      loadProposalById: mockLoadProposalById,
+      setProposalStatus: mockSetProposalStatus,
+      applyImprovements: mockApplyImprovements,
+      markProposalsApplied: mockMarkProposalsApplied,
+      updateProposalStatuses: mockUpdateProposalStatuses,
+    };
+    if (specifier === './executor.js') return {
+      createExecutor: mockCreateExecutor,
+    };
+    throw new Error(`Unexpected import: ${specifier}`);
+  });
+
+  return makeDeps({ readFile, importModule });
+}
+
+describe('runApprove', () => {
+  it('returns 1 when no proposal ID given', async () => {
+    const deps = makeApproveDeps();
+    const args: ParsedArgs = { command: 'approve', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runApprove(args, deps);
+
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('Usage: ralph approve');
+  });
+
+  it('returns 1 when proposal not found', async () => {
+    const deps = makeApproveDeps({ proposal: null });
+    const args: ParsedArgs = { command: 'approve', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, positional: 'IMPROVE-999' };
+
+    const code = await runApprove(args, deps);
+
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('not found');
+  });
+
+  it('returns 1 when proposal is not pending', async () => {
+    const deps = makeApproveDeps({ proposal: { id: 'IMPROVE-001', title: 'Test', status: 'applied' } });
+    const args: ParsedArgs = { command: 'approve', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, positional: 'IMPROVE-001' };
+
+    const code = await runApprove(args, deps);
+
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('status "applied"');
+    expect(errMsgs).toContain('only pending');
+  });
+
+  it('returns 1 when setProposalStatus fails', async () => {
+    const deps = makeApproveDeps({ setProposalStatus: vi.fn().mockResolvedValue(false) });
+    const args: ParsedArgs = { command: 'approve', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, positional: 'IMPROVE-001' };
+
+    const code = await runApprove(args, deps);
+
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('Failed to update');
+  });
+
+  it('approves and applies proposal successfully', async () => {
+    const deps = makeApproveDeps();
+    const args: ParsedArgs = { command: 'approve', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, positional: 'IMPROVE-001' };
+
+    const code = await runApprove(args, deps);
+
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('pending → approved');
+    expect(logged).toContain('approved → applied');
+    expect(logged).toContain('approved and applied successfully');
+  });
+
+  it('skips application in dry-run mode', async () => {
+    const deps = makeApproveDeps();
+    const args: ParsedArgs = { command: 'approve', configPath: DEFAULT_CONFIG_PATH, dryRun: true, taskFilter: undefined, positional: 'IMPROVE-001' };
+
+    const code = await runApprove(args, deps);
+
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('DRY RUN');
+    expect(logged).toContain('pending → approved');
+    expect(logged).not.toContain('applied');
+  });
+
+  it('returns 1 when application has errors', async () => {
+    const deps = makeApproveDeps({
+      applyResult: { applied: [], skipped: [], errors: [{ id: 'IMPROVE-001', error: 'Branch creation failed' }] },
+    });
+    const args: ParsedArgs = { command: 'approve', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, positional: 'IMPROVE-001' };
+
+    const code = await runApprove(args, deps);
+
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('Branch creation failed');
+  });
+
+  it('logs proposal details', async () => {
+    const deps = makeApproveDeps();
+    const args: ParsedArgs = { command: 'approve', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, positional: 'IMPROVE-001' };
+
+    await runApprove(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Title:');
+    expect(logged).toContain('Target:');
+  });
+
+  it('logs branch name on success', async () => {
+    const deps = makeApproveDeps();
+    const args: ParsedArgs = { command: 'approve', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, positional: 'IMPROVE-001' };
+
+    await runApprove(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Applied on branch:');
+  });
+
+  it('works via dispatch', async () => {
+    const deps = makeApproveDeps();
+    const code = await dispatch(['approve', 'IMPROVE-001'], deps);
+    expect(code).toBe(0);
+  });
+});
+
+// =============================================================================
+// runReject
+// =============================================================================
+
+function makeRejectDeps(overrides: {
+  proposal?: Record<string, unknown> | null;
+  setProposalStatus?: ReturnType<typeof vi.fn>;
+} = {}): CliDeps {
+  const mockLoadProposalById = vi.fn().mockResolvedValue(
+    'proposal' in overrides ? overrides.proposal : {
+      id: 'IMPROVE-001', title: 'Test proposal', status: 'pending',
+    }
+  );
+
+  const mockSetProposalStatus = overrides.setProposalStatus ?? vi.fn().mockResolvedValue(true);
+
+  const importModule = vi.fn().mockImplementation(async (specifier: string) => {
+    if (specifier === '../skills/discovery/apply-improvements.js') return {
+      loadProposalById: mockLoadProposalById,
+      setProposalStatus: mockSetProposalStatus,
+    };
+    throw new Error(`Unexpected import: ${specifier}`);
+  });
+
+  return makeDeps({
+    readFile: vi.fn().mockResolvedValue(''),
+    importModule,
+  });
+}
+
+describe('runReject', () => {
+  it('returns 1 when no proposal ID given', async () => {
+    const deps = makeRejectDeps();
+    const args: ParsedArgs = { command: 'reject', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runReject(args, deps);
+
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('Usage: ralph reject');
+  });
+
+  it('returns 1 when proposal not found', async () => {
+    const deps = makeRejectDeps({ proposal: null });
+    const args: ParsedArgs = { command: 'reject', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, positional: 'IMPROVE-999' };
+
+    const code = await runReject(args, deps);
+
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('not found');
+  });
+
+  it('returns 1 when proposal is not pending', async () => {
+    const deps = makeRejectDeps({ proposal: { id: 'IMPROVE-001', title: 'Test', status: 'rejected' } });
+    const args: ParsedArgs = { command: 'reject', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, positional: 'IMPROVE-001' };
+
+    const code = await runReject(args, deps);
+
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('status "rejected"');
+  });
+
+  it('rejects proposal successfully', async () => {
+    const deps = makeRejectDeps();
+    const args: ParsedArgs = { command: 'reject', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, positional: 'IMPROVE-001' };
+
+    const code = await runReject(args, deps);
+
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('pending → rejected');
+    expect(logged).toContain('IMPROVE-001 rejected');
+  });
+
+  it('includes reason in output when provided', async () => {
+    const deps = makeRejectDeps();
+    const args: ParsedArgs = { command: 'reject', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, positional: 'IMPROVE-001', reason: 'Not applicable' };
+
+    const code = await runReject(args, deps);
+
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Reason: Not applicable');
+  });
+
+  it('returns 1 when setProposalStatus fails', async () => {
+    const deps = makeRejectDeps({ setProposalStatus: vi.fn().mockResolvedValue(false) });
+    const args: ParsedArgs = { command: 'reject', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, positional: 'IMPROVE-001' };
+
+    const code = await runReject(args, deps);
+
+    expect(code).toBe(1);
+    const errMsgs = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(errMsgs).toContain('Failed to update');
+  });
+
+  it('logs proposal title', async () => {
+    const deps = makeRejectDeps();
+    const args: ParsedArgs = { command: 'reject', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, positional: 'IMPROVE-001' };
+
+    await runReject(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Title:');
+    expect(logged).toContain('Test proposal');
+  });
+
+  it('works via dispatch', async () => {
+    const deps = makeRejectDeps();
+    const code = await dispatch(['reject', 'IMPROVE-001'], deps);
+    expect(code).toBe(0);
+  });
+
+  it('works via dispatch with --reason', async () => {
+    const deps = makeRejectDeps();
+    const code = await dispatch(['reject', 'IMPROVE-001', '--reason=Too risky'], deps);
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Too risky');
   });
 });

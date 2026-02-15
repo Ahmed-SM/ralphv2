@@ -80,20 +80,21 @@ Build Ralph: a self-evolving agentic delivery system that reads specs, extracts 
 
 ## Current Task
 
-**Failure Mode Pattern Detector Implemented**
+**Improvement Review CLI Implemented**
 
 Ralph v1 MVP is now functional with:
 - Task discovery from markdown specs
 - Tracker sync (Jira, GitHub Issues, Linear adapters)
 - Git activity watching
 - Learning system with pattern detection (12 detectors including failure modes)
+- Human-in-the-loop improvement review (review, approve, reject CLI commands)
 - Sandboxed execution environment
 - Retry mode for failed tasks (onFailure: 'retry' with configurable maxRetries)
 - Notification system (console/Slack/email channels)
 - Unit test suite (679 tests across 20 core modules)
 - Property-based test suite (79 tests across 4 parsing/state modules)
 - Integration test suite (56 tests across 3 pipelines, including live git)
-- CLI commands: run, discover, sync, status, learn, dashboard
+- CLI commands: run, discover, sync, status, learn, dashboard, review, approve, reject
 
 ### Test Coverage (Phase 7) ✅ COMPLETE
 - [x] parse-markdown.ts — 12 tests (parsing, metadata extraction, task list flattening)
@@ -726,6 +727,48 @@ Next steps for production readiness:
   - Integration — 2 tests (included in detectPatterns array, type grouping suggestion)
   - Combined sources — 1 test (task status + metric blockers combined)
 - [x] Total: 19 new tests (1535 total across 36 test files)
+
+### Improvement Review CLI (Phase 42) ✅ COMPLETE
+- [x] Implement `ralph review` CLI command → [runtime/cli.ts](./runtime/cli.ts)
+  - Lists all pending improvement proposals with full details
+  - Shows ID, title, target, section, priority, confidence, rationale, evidence, description
+  - Displays approve/reject instructions
+- [x] Implement `ralph approve <id>` CLI command → [runtime/cli.ts](./runtime/cli.ts)
+  - Loads proposal by ID, validates it's in 'pending' status
+  - Sets status to 'approved' in learning.jsonl
+  - Applies the improvement (creates branch, commits via executor)
+  - Sets status to 'applied', logs improvement_applied event
+  - Supports `--dry-run` (approves without applying)
+  - Reports branch name and commit on success
+- [x] Implement `ralph reject <id>` CLI command → [runtime/cli.ts](./runtime/cli.ts)
+  - Loads proposal by ID, validates it's in 'pending' status
+  - Sets status to 'rejected' in learning.jsonl
+  - Supports `--reason=<text>` for rejection reason
+  - Stores reason and updatedAt timestamp in learning.jsonl
+- [x] Implement `setProposalStatus()` → [skills/discovery/apply-improvements.ts](./skills/discovery/apply-improvements.ts)
+  - Generic status transition: pending → approved | rejected | applied
+  - Preserves other events in the file
+  - Only transitions from 'pending' (safety guard)
+  - Adds updatedAt timestamp and optional reason
+- [x] Implement `loadProposalById()` → [skills/discovery/apply-improvements.ts](./skills/discovery/apply-improvements.ts)
+  - Loads a single proposal by ID from learning.jsonl
+  - Returns null if not found or file missing
+  - Returns proposal regardless of status (for display/validation)
+- [x] Added `positional` and `reason` optional fields to `ParsedArgs` type
+- [x] Added 'review', 'approve', 'reject' to CliCommand type, VALID_COMMANDS, HELP_TEXT
+- [x] Wired all three commands into dispatch()
+- [x] Exported runReview, runApprove, runReject from runtime/index.ts
+- [x] Completes the human-in-the-loop learning pipeline per specs/learning-system.md
+  - Spec status lifecycle: pending → approved/rejected → applied (was only pending/applied)
+  - Aligns with Ralph philosophy: "Human-reviewed — improvements proposed, not forced"
+- [x] Unit tests — setProposalStatus: 8 tests (approve, reject, reason, not-found, missing-file, non-pending guard, preserve-events, updatedAt)
+- [x] Unit tests — loadProposalById: 6 tests (found, not-found, empty, missing-file, non-JSON, any-status)
+- [x] Unit tests — runReview: 4 tests (header, empty, details display, dispatch)
+- [x] Unit tests — runApprove: 9 tests (no-id, not-found, non-pending, status-fail, success, dry-run, errors, details, dispatch)
+- [x] Unit tests — runReject: 9 tests (no-id, not-found, non-pending, success, reason, status-fail, title, dispatch, dispatch-reason)
+- [x] Unit tests — parseArgs: 7 tests (review/approve/reject parsing, positional, reason, reason-with-equals, skip-flags)
+- [x] Unit tests — resolveCommand: 3 tests (review, approve, reject)
+- [x] Total: 47 new tests (1582 total across 36 test files)
 
 ## Dependencies
 
