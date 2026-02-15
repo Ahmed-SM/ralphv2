@@ -1096,6 +1096,16 @@ export interface DashboardData {
   tasksFailed: number;
   avgIterations: number;
   estimationAccuracy: number;
+  modeKpis: Partial<Record<'core' | 'delivery', {
+    runs: number;
+    passes: number;
+    failures: number;
+    avgSuccessRate: number;
+    avgCycleTimeMs: number;
+    avgRollbackRate: number;
+    avgHumanInterventions: number;
+    escapedDefects: number;
+  }>>;
   patterns: Array<{ pattern: string; description: string }>;
   improvementsApplied: number;
   improvementsPending: number;
@@ -1201,17 +1211,87 @@ export function buildDashboardData(
 
   // Parse progress for iteration counts
   const taskIterations = new Map<string, number>();
+  const modeAccumulator: Record<'core' | 'delivery', {
+    runs: number;
+    passes: number;
+    failures: number;
+    successRateSum: number;
+    cycleTimeMsSum: number;
+    rollbackRateSum: number;
+    humanInterventionsSum: number;
+    escapedDefects: number;
+  }> = {
+    core: {
+      runs: 0,
+      passes: 0,
+      failures: 0,
+      successRateSum: 0,
+      cycleTimeMsSum: 0,
+      rollbackRateSum: 0,
+      humanInterventionsSum: 0,
+      escapedDefects: 0,
+    },
+    delivery: {
+      runs: 0,
+      passes: 0,
+      failures: 0,
+      successRateSum: 0,
+      cycleTimeMsSum: 0,
+      rollbackRateSum: 0,
+      humanInterventionsSum: 0,
+      escapedDefects: 0,
+    },
+  };
   for (const line of progressLines) {
     if (!line.trim()) continue;
     let event: Record<string, unknown>;
     try { event = JSON.parse(line); } catch { continue; }
+    const ts = event.timestamp as string | undefined;
+    if (ts && ts < cutoffIso) continue;
+
     if (event.type === 'iteration') {
-      const ts = event.timestamp as string | undefined;
-      if (ts && ts < cutoffIso) continue;
       const taskId = event.taskId as string;
       if (taskId) {
         taskIterations.set(taskId, (taskIterations.get(taskId) || 0) + 1);
       }
+      continue;
+    }
+
+    if (
+      event.type === 'induction_invariant_validated'
+      || event.type === 'induction_invariant_violation'
+    ) {
+      const mode = event.mode;
+      if (mode !== 'core' && mode !== 'delivery') continue;
+
+      const kpis = event.kpis as Record<string, unknown> | undefined;
+      if (!kpis) continue;
+
+      const successRate = Number(kpis.successRate);
+      const avgCycleTimeMs = Number(kpis.avgCycleTimeMs);
+      const rollbackRate = Number(kpis.rollbackRate);
+      const humanInterventions = Number(kpis.humanInterventions);
+      const escapedDefects = Number(kpis.escapedDefects);
+
+      if (
+        Number.isNaN(successRate)
+        || Number.isNaN(avgCycleTimeMs)
+        || Number.isNaN(rollbackRate)
+        || Number.isNaN(humanInterventions)
+        || Number.isNaN(escapedDefects)
+      ) {
+        continue;
+      }
+
+      const acc = modeAccumulator[mode];
+      acc.runs += 1;
+      if (event.type === 'induction_invariant_validated') acc.passes += 1;
+      else acc.failures += 1;
+      acc.successRateSum += successRate;
+      acc.cycleTimeMsSum += avgCycleTimeMs;
+      acc.rollbackRateSum += rollbackRate;
+      acc.humanInterventionsSum += humanInterventions;
+      acc.escapedDefects += escapedDefects;
     }
   }
 
@@ -1240,6 +1320,22 @@ export function buildDashboardData(
   // Period label
   const now = new Date();
   const period = `Last ${daysWindow} days (${now.toISOString().slice(0, 10)})`;
+  const modeKpis: DashboardData['modeKpis'] = {};
+  for (const mode of ['core', 'delivery'] as const) {
+    const acc = modeAccumulator[mode];
+    if (acc.runs === 0) continue;
+
+    modeKpis[mode] = {
+      runs: acc.runs,
+      passes: acc.passes,
+      failures: acc.failures,
+      avgSuccessRate: acc.successRateSum / acc.runs,
+      avgCycleTimeMs: acc.cycleTimeMsSum / acc.runs,
+      avgRollbackRate: acc.rollbackRateSum / acc.runs,
+      avgHumanInterventions: acc.humanInterventionsSum / acc.runs,
+      escapedDefects: acc.escapedDefects,
+    };
+  }
 
   return {
     period,
@@ -1247,6 +1343,7 @@ export function buildDashboardData(
     tasksFailed,
     avgIterations,
     estimationAccuracy,
+    modeKpis,
     patterns,
     improvementsApplied,
     improvementsPending,
@@ -1280,6 +1377,25 @@ export function formatDashboard(data: DashboardData): string[] {
   }
   if (data.estimationAccuracy > 0) {
     lines.push(`  Estimation accuracy: ${data.estimationAccuracy.toFixed(0)}%`);
+  }
+  lines.push('');
+
+  // Mode KPIs
+  lines.push('### Mode KPIs');
+  const modeEntries = (['core', 'delivery'] as const)
+    .map(mode => ({ mode, summary: data.modeKpis[mode] }))
+    .filter(item => item.summary !== undefined) as Array<{ mode: 'core' | 'delivery'; summary: NonNullable<DashboardData['modeKpis']['core']> }>;
+
+  if (modeEntries.length === 0) {
+    lines.push('  No mode KPI data recorded.');
+  } else {
+    for (const { mode, summary } of modeEntries) {
+      const label = mode === 'core' ? 'Core (platform health)' : 'Delivery (delivery performance)';
+      lines.push(`  ${label}:`);
+      lines.push(`    Runs=${summary.runs} (pass=${summary.passes}, fail=${summary.failures})`);
+      lines.push(`    Success=${(summary.avgSuccessRate * 100).toFixed(0)}%, Cycle=${(summary.avgCycleTimeMs / 1000).toFixed(1)}s, Rollback=${(summary.avgRollbackRate * 100).toFixed(0)}%`);
+      lines.push(`    Escaped defects=${summary.escapedDefects}, Human interventions=${summary.avgHumanInterventions.toFixed(1)}`);
+    }
   }
   lines.push('');
 

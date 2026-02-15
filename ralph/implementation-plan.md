@@ -931,7 +931,10 @@ Mode separation requirements:
 - [x] Enforce policy profile by mode (command/file allowlists + approval gates) — Phase 43.5: executor enforces policy on every readFile/writeFile/bash call.
 - [x] Separate state by mode/repo (`state/core/*`, `state/delivery/<repo>/*`) → implemented via [runtime/state-paths.ts](./runtime/state-paths.ts) and loop wiring in [runtime/loop.ts](./runtime/loop.ts) with legacy fallback.
 - [x] Block Ralph self-modification while in `delivery` mode unless explicitly approved. → enforced in [runtime/policy.ts](./runtime/policy.ts) (`checkFileWrite` self-mod guard) with opt-in override via `RALPH_APPROVE_SELF_MODIFY=true`; wired through [runtime/executor.ts](./runtime/executor.ts) and covered by [runtime/policy.test.ts](./runtime/policy.test.ts) and [runtime/policy-enforcement.test.ts](./runtime/policy-enforcement.test.ts).
-- [ ] Report KPIs per mode (platform health vs delivery performance).
+- [x] Report KPIs per mode (platform health vs delivery performance). ✅ COMPLETE
+  - Added mode KPI aggregation to dashboard data model in [runtime/cli.ts](./runtime/cli.ts) from `induction_invariant_validated` and `induction_invariant_violation` events in `progress.jsonl`
+  - Added dashboard rendering section `### Mode KPIs` with separate summaries for core (platform health) and delivery (delivery performance)
+  - Added unit tests for mode KPI aggregation/formatting/dashboard integration in [runtime/cli.test.ts](./runtime/cli.test.ts)
 
 #### New Project Runbook (v1)
 
@@ -1126,6 +1129,7 @@ Phase 44 planned: 🟡
 - [x] Induction invariant encoded as enforceable runtime contract
 - [x] Bootstrap generation of `specs/*.md` and `implementation-plan.md` for external repos
 - [x] Human review required for generated plans before execution
+- [x] KPI reporting split by mode (core platform health vs delivery performance)
 - [ ] Drift-aware spec/plan tailoring loop with append-only rationale
 - [ ] External pilot proof across 3 heterogeneous repositories
 

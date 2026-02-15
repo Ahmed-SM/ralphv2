@@ -1542,6 +1542,72 @@ describe('buildDashboardData', () => {
     expect(data.avgIterations).toBe(3);
   });
 
+  it('aggregates mode KPIs from induction invariant progress events', () => {
+    const progressLines = [
+      JSON.stringify({
+        type: 'induction_invariant_validated',
+        mode: 'core',
+        kpis: { successRate: 1, avgCycleTimeMs: 2000, rollbackRate: 0.1, humanInterventions: 1, escapedDefects: 0 },
+        timestamp: new Date().toISOString(),
+      }),
+      JSON.stringify({
+        type: 'induction_invariant_violation',
+        mode: 'core',
+        kpis: { successRate: 0.5, avgCycleTimeMs: 4000, rollbackRate: 0.3, humanInterventions: 2, escapedDefects: 1 },
+        timestamp: new Date().toISOString(),
+      }),
+      JSON.stringify({
+        type: 'induction_invariant_validated',
+        mode: 'delivery',
+        kpis: { successRate: 0.9, avgCycleTimeMs: 3000, rollbackRate: 0.2, humanInterventions: 1, escapedDefects: 0 },
+        timestamp: new Date().toISOString(),
+      }),
+    ];
+
+    const data = buildDashboardData([], [], progressLines);
+
+    expect(data.modeKpis.core).toMatchObject({
+      runs: 2,
+      passes: 1,
+      failures: 1,
+      avgSuccessRate: 0.75,
+      avgCycleTimeMs: 3000,
+      avgRollbackRate: 0.2,
+      avgHumanInterventions: 1.5,
+      escapedDefects: 1,
+    });
+    expect(data.modeKpis.delivery).toMatchObject({
+      runs: 1,
+      passes: 1,
+      failures: 0,
+      avgSuccessRate: 0.9,
+      avgCycleTimeMs: 3000,
+      avgRollbackRate: 0.2,
+      avgHumanInterventions: 1,
+      escapedDefects: 0,
+    });
+  });
+
+  it('ignores invalid mode KPI events', () => {
+    const progressLines = [
+      JSON.stringify({
+        type: 'induction_invariant_validated',
+        mode: 'invalid',
+        kpis: { successRate: 1, avgCycleTimeMs: 2000, rollbackRate: 0.1, humanInterventions: 1, escapedDefects: 0 },
+        timestamp: new Date().toISOString(),
+      }),
+      JSON.stringify({
+        type: 'induction_invariant_validated',
+        mode: 'core',
+        kpis: { successRate: 'bad', avgCycleTimeMs: 2000, rollbackRate: 0.1, humanInterventions: 1, escapedDefects: 0 },
+        timestamp: new Date().toISOString(),
+      }),
+    ];
+    const data = buildDashboardData([], [], progressLines);
+    expect(data.modeKpis.core).toBeUndefined();
+    expect(data.modeKpis.delivery).toBeUndefined();
+  });
+
   it('computes estimation accuracy from task estimates', () => {
     const taskLines = [
       // estimate=5, actual=5 → ratio 1.0 → accurate
@@ -1620,6 +1686,7 @@ describe('formatDashboard', () => {
     tasksFailed: 0,
     avgIterations: 0,
     estimationAccuracy: 0,
+    modeKpis: {},
     patterns: [],
     improvementsApplied: 0,
     improvementsPending: 0,
@@ -1665,6 +1732,45 @@ describe('formatDashboard', () => {
   it('hides estimation accuracy when zero', () => {
     const output = formatDashboard(emptyData).join('\n');
     expect(output).not.toContain('Estimation accuracy');
+  });
+
+  it('shows mode KPIs when present', () => {
+    const data: DashboardData = {
+      ...emptyData,
+      modeKpis: {
+        core: {
+          runs: 2,
+          passes: 1,
+          failures: 1,
+          avgSuccessRate: 0.75,
+          avgCycleTimeMs: 3000,
+          avgRollbackRate: 0.2,
+          avgHumanInterventions: 1.5,
+          escapedDefects: 1,
+        },
+        delivery: {
+          runs: 1,
+          passes: 1,
+          failures: 0,
+          avgSuccessRate: 0.9,
+          avgCycleTimeMs: 2500,
+          avgRollbackRate: 0.1,
+          avgHumanInterventions: 1,
+          escapedDefects: 0,
+        },
+      },
+    };
+    const output = formatDashboard(data).join('\n');
+    expect(output).toContain('### Mode KPIs');
+    expect(output).toContain('Core (platform health)');
+    expect(output).toContain('Delivery (delivery performance)');
+    expect(output).toContain('Runs=2 (pass=1, fail=1)');
+    expect(output).toContain('Escaped defects=1');
+  });
+
+  it('shows no-mode-kpi message when empty', () => {
+    const output = formatDashboard(emptyData).join('\n');
+    expect(output).toContain('No mode KPI data recorded');
   });
 
   it('shows patterns when present', () => {
@@ -1850,6 +1956,31 @@ describe('runDashboard', () => {
     const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
     expect(logged).toContain('Applied:  1');
     expect(logged).toContain('Pending:  1');
+  });
+
+  it('displays mode KPIs from progress.jsonl', async () => {
+    const progressLines = [
+      JSON.stringify({
+        type: 'induction_invariant_validated',
+        mode: 'delivery',
+        kpis: { successRate: 0.9, avgCycleTimeMs: 2400, rollbackRate: 0.2, humanInterventions: 1, escapedDefects: 0 },
+        timestamp: new Date().toISOString(),
+      }),
+    ].join('\n');
+
+    const deps = makeDeps({
+      readFile: vi.fn().mockImplementation(async (path: string) => {
+        if (path.endsWith('progress.jsonl')) return progressLines;
+        throw new Error('ENOENT');
+      }),
+    });
+    const args: ParsedArgs = { command: 'dashboard', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runDashboard(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Delivery (delivery performance)');
+    expect(logged).toContain('Success=90%');
   });
 
   it('reads all three state files', async () => {
