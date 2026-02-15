@@ -225,7 +225,10 @@ export type PatternType =
   | 'high_churn'
   | 'coupling'
   | 'iteration_anomaly'
-  | 'failure_mode';
+  | 'failure_mode'
+  | 'spec_drift'
+  | 'plan_drift'
+  | 'knowledge_staleness';
 
 export interface PatternDetectedEvent {
   type: 'pattern_detected';

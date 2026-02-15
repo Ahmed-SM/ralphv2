@@ -1006,10 +1006,19 @@ Bootstrap assets:
   - Gate logs an `execution_blocked` progress event with reason/status when approval is missing.
   - Updated `ralph bootstrap` in [runtime/cli.ts](./runtime/cli.ts) to append a `plan_review` event with `status: pending_review` to `state/learning.jsonl` when new baseline artifacts are generated.
   - Added unit tests for approval gating in [runtime/loop-orchestration.test.ts](./runtime/loop-orchestration.test.ts) and bootstrap event creation/deduping in [runtime/cli.test.ts](./runtime/cli.test.ts).
-- [ ] **Knowledge tailoring + maintenance loop (per target system):**
+- [x] **Knowledge tailoring + maintenance loop (per target system):** ✅ COMPLETE
   - Detect drift between codebase reality and generated specs/plans
   - Propose incremental updates to `specs/*.md` and `implementation-plan.md`
   - Keep historical rationale/version trail in append-only learning events.
+  - Added 3 drift pattern detectors to [skills/discovery/detect-patterns.ts](./skills/discovery/detect-patterns.ts):
+    - `detectSpecDrift` — detects areas with high failure rate (>30%) indicating spec/reality mismatch
+    - `detectPlanDrift` — detects areas where tasks spawn unexpected subtasks (>50% spawn ratio) indicating scope underestimation
+    - `detectKnowledgeStaleness` — detects when >40% of file changes are in uncategorized areas indicating missing spec coverage
+  - Extended `PatternType` in [types/index.ts](./types/index.ts) with `spec_drift`, `plan_drift`, `knowledge_staleness`
+  - Extended `patternToProposal()` in [skills/discovery/improve-agents.ts](./skills/discovery/improve-agents.ts) to generate ImprovementProposals targeting `specs/*.md` and `implementation-plan.md` for each drift type
+  - All 3 detectors wired into `detectPatterns()` detector array (runs automatically in `runLearningAnalysis()`)
+  - Proposals follow existing pipeline: detection → proposal → human review → apply on branch
+  - Unit tests — 30 tests (spec_drift: 11, plan_drift: 8, knowledge_staleness: 10, integration: 1)
 - [ ] **Cross-project proof of induction:**
   - Pilot on at least 3 external repositories with different stacks
   - Require invariant pass for N consecutive tasks per repo before autonomy is increased
@@ -1130,7 +1139,7 @@ Phase 44 planned: 🟡
 - [x] Bootstrap generation of `specs/*.md` and `implementation-plan.md` for external repos
 - [x] Human review required for generated plans before execution
 - [x] KPI reporting split by mode (core platform health vs delivery performance)
-- [ ] Drift-aware spec/plan tailoring loop with append-only rationale
+- [x] Drift-aware spec/plan tailoring loop with append-only rationale
 - [ ] External pilot proof across 3 heterogeneous repositories
 
 Phase 45 planned: 🟡

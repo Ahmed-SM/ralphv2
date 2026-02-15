@@ -23,7 +23,10 @@ export type PatternType =
   | 'iteration_anomaly'
   | 'failure_mode'
   | 'velocity_trend'
-  | 'bottleneck';
+  | 'bottleneck'
+  | 'spec_drift'
+  | 'plan_drift'
+  | 'knowledge_staleness';
 
 export interface DetectedPattern {
   type: PatternType;
@@ -80,6 +83,9 @@ export function detectPatterns(context: DetectionContext): PatternDetectionResul
     detectHighChurn,
     detectCoupling,
     detectFailureModes,
+    detectSpecDrift,
+    detectPlanDrift,
+    detectKnowledgeStaleness,
   ];
 
   for (const detector of detectors) {
@@ -792,6 +798,206 @@ export function detectFailureModes(context: DetectionContext): DetectedPattern |
     },
     evidence: topArea[1].map(f => f.taskId),
     suggestion: `Investigate recurring failures in "${topArea[0]}" — ${topArea[1].length} tasks have failed`,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Detect spec drift — when tasks in an area repeatedly hit blockers or fail,
+ * indicating the spec doesn't match codebase reality.
+ *
+ * Signal: high blocker/failure rate per domain/aggregate compared to overall rate.
+ * Requires >= 3 completed tasks in the area and a failure rate > 30%.
+ */
+export function detectSpecDrift(context: DetectionContext): DetectedPattern | null {
+  const minSamples = context.minSamples ?? 3;
+
+  // Collect per-area stats: total completed tasks and failed/blocked ones
+  const byArea = new Map<string, { total: number; failed: number; taskIds: string[] }>();
+
+  for (const task of context.tasks.values()) {
+    if (task.status === 'done' || task.status === 'blocked' || task.status === 'cancelled') {
+      const key = task.aggregate || task.domain || 'unknown';
+      const entry = byArea.get(key) || { total: 0, failed: 0, taskIds: [] };
+      entry.total++;
+      if (task.status === 'blocked' || task.status === 'cancelled') {
+        entry.failed++;
+      }
+      entry.taskIds.push(task.id);
+      byArea.set(key, entry);
+    }
+  }
+
+  // Also incorporate metrics-based blockers for completed tasks
+  for (const m of context.metrics) {
+    if (m.blockers !== undefined && m.blockers > 0) {
+      const key = m.aggregate || m.domain || 'unknown';
+      const entry = byArea.get(key) || { total: 0, failed: 0, taskIds: [] };
+      // Only count if not already counted from task status
+      if (!entry.taskIds.includes(m.taskId)) {
+        entry.total++;
+        entry.failed++;
+        entry.taskIds.push(m.taskId);
+        byArea.set(key, entry);
+      } else {
+        // Task already counted by status; if it's not already failed, add the failure
+        const task = context.tasks.get(m.taskId);
+        if (task && task.status === 'done') {
+          entry.failed++;
+        }
+      }
+    }
+  }
+
+  // Find areas with high failure rate
+  const driftAreas = Array.from(byArea.entries())
+    .filter(([, stats]) => stats.total >= minSamples && stats.failed / stats.total > 0.3)
+    .sort((a, b) => (b[1].failed / b[1].total) - (a[1].failed / a[1].total));
+
+  if (driftAreas.length === 0) {
+    return null;
+  }
+
+  const worst = driftAreas[0];
+  const failureRate = worst[1].failed / worst[1].total;
+
+  return {
+    type: 'spec_drift',
+    confidence: Math.min(worst[1].total / 8, 1) * 0.8,
+    description: `"${worst[0]}" has a ${(failureRate * 100).toFixed(0)}% failure rate (${worst[1].failed}/${worst[1].total}) — specs may not match codebase reality`,
+    data: {
+      area: worst[0],
+      failureRate,
+      failedCount: worst[1].failed,
+      totalCount: worst[1].total,
+      driftAreas: driftAreas.slice(0, 5).map(([name, stats]) => ({
+        name,
+        failureRate: stats.failed / stats.total,
+        failed: stats.failed,
+        total: stats.total,
+      })),
+    },
+    evidence: worst[1].taskIds.slice(0, 5),
+    suggestion: `Review and update specs for "${worst[0]}" — high failure rate suggests spec/reality mismatch`,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Detect plan drift — when tasks spawn unexpected subtasks or have many
+ * child tasks not anticipated in the original plan structure.
+ *
+ * Signal: areas where parent tasks generate many subtasks relative to
+ * original task count, suggesting the plan underestimated scope.
+ * Requires >= 2 parent tasks spawning subtasks.
+ */
+export function detectPlanDrift(context: DetectionContext): DetectedPattern | null {
+  // Count tasks with parentId (subtasks) per area
+  const byArea = new Map<string, { planned: number; spawned: number; parentIds: Set<string>; taskIds: string[] }>();
+
+  for (const task of context.tasks.values()) {
+    const key = task.aggregate || task.domain || 'unknown';
+    const entry = byArea.get(key) || { planned: 0, spawned: 0, parentIds: new Set(), taskIds: [] };
+
+    if (task.parentId) {
+      entry.spawned++;
+      entry.parentIds.add(task.parentId);
+    } else {
+      entry.planned++;
+    }
+    entry.taskIds.push(task.id);
+    byArea.set(key, entry);
+  }
+
+  // Find areas where subtask ratio is high (many spawned vs planned)
+  const driftAreas = Array.from(byArea.entries())
+    .filter(([, stats]) => stats.parentIds.size >= 2 && stats.spawned > stats.planned * 0.5)
+    .sort((a, b) => (b[1].spawned / b[1].planned) - (a[1].spawned / a[1].planned));
+
+  if (driftAreas.length === 0) {
+    return null;
+  }
+
+  const worst = driftAreas[0];
+  const spawnRatio = worst[1].spawned / worst[1].planned;
+
+  return {
+    type: 'plan_drift',
+    confidence: Math.min(worst[1].parentIds.size / 5, 1) * 0.75,
+    description: `"${worst[0]}" has ${worst[1].spawned} subtasks from ${worst[1].parentIds.size} parents (${(spawnRatio * 100).toFixed(0)}% spawn ratio) — plan may underestimate scope`,
+    data: {
+      area: worst[0],
+      spawnRatio,
+      spawnedCount: worst[1].spawned,
+      plannedCount: worst[1].planned,
+      parentCount: worst[1].parentIds.size,
+      driftAreas: driftAreas.slice(0, 5).map(([name, stats]) => ({
+        name,
+        spawnRatio: stats.spawned / stats.planned,
+        spawned: stats.spawned,
+        planned: stats.planned,
+        parents: stats.parentIds.size,
+      })),
+    },
+    evidence: worst[1].taskIds.slice(0, 5),
+    suggestion: `Update implementation plan for "${worst[0]}" — unexpected subtask growth indicates scope underestimation`,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Detect knowledge staleness — when file changes concentrate in areas
+ * not covered by any aggregate/domain, suggesting specs are outdated
+ * or missing coverage for active development areas.
+ *
+ * Signal: metrics with no aggregate AND no domain (unknown areas) that
+ * have significant file churn relative to the total.
+ * Requires >= 3 tasks in unknown areas and > 40% of total file changes.
+ */
+export function detectKnowledgeStaleness(context: DetectionContext): DetectedPattern | null {
+  let unknownFiles = 0;
+  let unknownTasks = 0;
+  let totalFiles = 0;
+  let totalTasks = 0;
+  const unknownTaskIds: string[] = [];
+
+  for (const m of context.metrics) {
+    const files = m.filesChanged ?? 0;
+    if (files === 0) continue;
+
+    totalFiles += files;
+    totalTasks++;
+
+    if (!m.aggregate && !m.domain) {
+      unknownFiles += files;
+      unknownTasks++;
+      unknownTaskIds.push(m.taskId);
+    }
+  }
+
+  if (unknownTasks < 3 || totalFiles === 0) {
+    return null;
+  }
+
+  const unknownRatio = unknownFiles / totalFiles;
+
+  if (unknownRatio <= 0.4) {
+    return null;
+  }
+
+  return {
+    type: 'knowledge_staleness',
+    confidence: Math.min(unknownTasks / 8, 1) * 0.7,
+    description: `${(unknownRatio * 100).toFixed(0)}% of file changes (${unknownFiles}/${totalFiles}) are in uncategorized areas — specs may be missing coverage`,
+    data: {
+      unknownRatio,
+      unknownFiles,
+      unknownTasks,
+      totalFiles,
+      totalTasks,
+    },
+    evidence: unknownTaskIds.slice(0, 5),
+    suggestion: 'Review and update specs to cover active development areas that lack aggregate/domain classification',
     timestamp: new Date().toISOString(),
   };
 }

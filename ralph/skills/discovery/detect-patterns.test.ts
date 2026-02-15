@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectPatterns, detectTestGaps, detectHighChurn, detectCoupling, detectFailureModes, type DetectionContext } from './detect-patterns.js';
+import { detectPatterns, detectTestGaps, detectHighChurn, detectCoupling, detectFailureModes, detectSpecDrift, detectPlanDrift, detectKnowledgeStaleness, type DetectionContext } from './detect-patterns.js';
 import type { Task } from '../../types/index.js';
 import type { TaskMetrics, AggregateMetrics } from '../track/record-metrics.js';
 
@@ -1389,5 +1389,472 @@ describe('failure mode detection', () => {
     const result = detectFailureModes(makeContext({ tasks }));
     expect(result).not.toBeNull();
     expect(result!.data.totalFailures).toBe(5);
+  });
+});
+
+// =============================================================================
+// Spec Drift Detector
+// =============================================================================
+
+describe('spec drift detection', () => {
+  it('detects areas with high failure rate from blocked tasks', () => {
+    const tasks = new Map<string, Task>();
+    // 3 done + 2 blocked in "api" = 40% failure rate
+    for (let i = 0; i < 3; i++) {
+      const id = `RALPH-D${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'done', aggregate: 'api' }));
+    }
+    for (let i = 0; i < 2; i++) {
+      const id = `RALPH-B${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'blocked', aggregate: 'api' }));
+    }
+
+    const result = detectSpecDrift(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('spec_drift');
+    expect(result!.data.area).toBe('api');
+    expect(result!.data.failureRate).toBe(0.4);
+  });
+
+  it('detects failures from cancelled tasks', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 2; i++) {
+      const id = `RALPH-D${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'done', aggregate: 'deploy' }));
+    }
+    for (let i = 0; i < 2; i++) {
+      const id = `RALPH-C${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'cancelled', aggregate: 'deploy' }));
+    }
+
+    const result = detectSpecDrift(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.data.area).toBe('deploy');
+    expect(result!.data.failureRate).toBe(0.5);
+  });
+
+  it('incorporates metrics blockers for done tasks', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 3; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'done', aggregate: 'parser' }));
+    }
+
+    // 2 of the 3 done tasks also had blockers
+    const metrics: TaskMetrics[] = [
+      makeMetric({ taskId: 'RALPH-001', aggregate: 'parser', blockers: 1 }),
+      makeMetric({ taskId: 'RALPH-002', aggregate: 'parser', blockers: 2 }),
+    ];
+
+    const result = detectSpecDrift(makeContext({ tasks, metrics }));
+    expect(result).not.toBeNull();
+    expect(result!.data.failedCount).toBe(2);
+  });
+
+  it('does not detect drift when failure rate <= 30%', () => {
+    const tasks = new Map<string, Task>();
+    // 4 done + 1 blocked = 20% failure rate
+    for (let i = 0; i < 4; i++) {
+      const id = `RALPH-D${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'done', aggregate: 'api' }));
+    }
+    tasks.set('RALPH-B001', makeTask({ id: 'RALPH-B001', status: 'blocked', aggregate: 'api' }));
+
+    const result = detectSpecDrift(makeContext({ tasks }));
+    expect(result).toBeNull();
+  });
+
+  it('does not detect drift with fewer than 3 completed tasks', () => {
+    const tasks = new Map<string, Task>();
+    tasks.set('RALPH-001', makeTask({ id: 'RALPH-001', status: 'done', aggregate: 'api' }));
+    tasks.set('RALPH-002', makeTask({ id: 'RALPH-002', status: 'blocked', aggregate: 'api' }));
+
+    const result = detectSpecDrift(makeContext({ tasks }));
+    expect(result).toBeNull();
+  });
+
+  it('reports the worst area first', () => {
+    const tasks = new Map<string, Task>();
+    // "api" has 50% failure (2 done + 2 blocked = 4 tasks)
+    for (let i = 0; i < 2; i++) {
+      tasks.set(`RALPH-AD${i}`, makeTask({ id: `RALPH-AD${i}`, status: 'done', aggregate: 'api' }));
+      tasks.set(`RALPH-AB${i}`, makeTask({ id: `RALPH-AB${i}`, status: 'blocked', aggregate: 'api' }));
+    }
+    // "ui" has 33% failure (2 done + 1 blocked = 3 tasks)
+    tasks.set('RALPH-UD1', makeTask({ id: 'RALPH-UD1', status: 'done', aggregate: 'ui' }));
+    tasks.set('RALPH-UD2', makeTask({ id: 'RALPH-UD2', status: 'done', aggregate: 'ui' }));
+    tasks.set('RALPH-UB1', makeTask({ id: 'RALPH-UB1', status: 'blocked', aggregate: 'ui' }));
+
+    const result = detectSpecDrift(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.data.area).toBe('api');
+  });
+
+  it('uses domain as fallback when aggregate is missing', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 2; i++) {
+      tasks.set(`RALPH-D${i}`, makeTask({ id: `RALPH-D${i}`, status: 'done', domain: 'billing' }));
+    }
+    tasks.set('RALPH-B1', makeTask({ id: 'RALPH-B1', status: 'blocked', domain: 'billing' }));
+
+    const result = detectSpecDrift(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.data.area).toBe('billing');
+  });
+
+  it('includes suggestion to update specs', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 2; i++) {
+      tasks.set(`RALPH-D${i}`, makeTask({ id: `RALPH-D${i}`, status: 'done', aggregate: 'runtime' }));
+    }
+    tasks.set('RALPH-B1', makeTask({ id: 'RALPH-B1', status: 'blocked', aggregate: 'runtime' }));
+
+    const result = detectSpecDrift(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.suggestion).toContain('runtime');
+    expect(result!.suggestion).toContain('spec');
+  });
+
+  it('confidence scales with sample size', () => {
+    const makeDriftTasks = (doneCount: number, blockedCount: number) => {
+      const tasks = new Map<string, Task>();
+      for (let i = 0; i < doneCount; i++) {
+        tasks.set(`RALPH-D${i}`, makeTask({ id: `RALPH-D${i}`, status: 'done', aggregate: 'api' }));
+      }
+      for (let i = 0; i < blockedCount; i++) {
+        tasks.set(`RALPH-B${i}`, makeTask({ id: `RALPH-B${i}`, status: 'blocked', aggregate: 'api' }));
+      }
+      return tasks;
+    };
+
+    // 3 total (2 done + 1 blocked) vs 8 total (5 done + 3 blocked) — both > 30% failure
+    const result3 = detectSpecDrift(makeContext({ tasks: makeDriftTasks(2, 1) }));
+    const result8 = detectSpecDrift(makeContext({ tasks: makeDriftTasks(5, 3) }));
+    expect(result3).not.toBeNull();
+    expect(result8).not.toBeNull();
+    expect(result8!.confidence).toBeGreaterThan(result3!.confidence);
+  });
+
+  it('is included in detectPatterns detector array', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 2; i++) {
+      tasks.set(`RALPH-D${i}`, makeTask({ id: `RALPH-D${i}`, status: 'done', aggregate: 'api' }));
+    }
+    tasks.set('RALPH-B1', makeTask({ id: 'RALPH-B1', status: 'blocked', aggregate: 'api' }));
+
+    const result = detectPatterns(makeContext({ tasks, minConfidence: 0 }));
+    const drift = result.patterns.find(p => p.type === 'spec_drift');
+    expect(drift).toBeDefined();
+  });
+
+  it('description mentions spec mismatch', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 2; i++) {
+      tasks.set(`RALPH-D${i}`, makeTask({ id: `RALPH-D${i}`, status: 'done', aggregate: 'api' }));
+    }
+    tasks.set('RALPH-B1', makeTask({ id: 'RALPH-B1', status: 'blocked', aggregate: 'api' }));
+
+    const result = detectSpecDrift(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.description).toContain('spec');
+  });
+});
+
+// =============================================================================
+// Plan Drift Detector
+// =============================================================================
+
+describe('plan drift detection', () => {
+  it('detects areas where tasks spawn many subtasks', () => {
+    const tasks = new Map<string, Task>();
+    // 3 planned parent tasks
+    for (let i = 0; i < 3; i++) {
+      tasks.set(`RALPH-P${i}`, makeTask({ id: `RALPH-P${i}`, aggregate: 'api' }));
+    }
+    // 4 spawned subtasks (>50% of planned)
+    for (let i = 0; i < 4; i++) {
+      tasks.set(`RALPH-S${i}`, makeTask({ id: `RALPH-S${i}`, aggregate: 'api', parentId: `RALPH-P${i % 3}` }));
+    }
+
+    const result = detectPlanDrift(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('plan_drift');
+    expect(result!.data.area).toBe('api');
+    expect(result!.data.spawnedCount).toBe(4);
+    expect(result!.data.plannedCount).toBe(3);
+  });
+
+  it('does not detect drift when subtask ratio <= 50%', () => {
+    const tasks = new Map<string, Task>();
+    // 4 planned + 1 subtask from 1 parent = low ratio
+    for (let i = 0; i < 4; i++) {
+      tasks.set(`RALPH-P${i}`, makeTask({ id: `RALPH-P${i}`, aggregate: 'api' }));
+    }
+    tasks.set('RALPH-S0', makeTask({ id: 'RALPH-S0', aggregate: 'api', parentId: 'RALPH-P0' }));
+
+    const result = detectPlanDrift(makeContext({ tasks }));
+    expect(result).toBeNull();
+  });
+
+  it('requires at least 2 parent tasks spawning subtasks', () => {
+    const tasks = new Map<string, Task>();
+    tasks.set('RALPH-P0', makeTask({ id: 'RALPH-P0', aggregate: 'api' }));
+    // 3 subtasks from only 1 parent
+    for (let i = 0; i < 3; i++) {
+      tasks.set(`RALPH-S${i}`, makeTask({ id: `RALPH-S${i}`, aggregate: 'api', parentId: 'RALPH-P0' }));
+    }
+
+    const result = detectPlanDrift(makeContext({ tasks }));
+    expect(result).toBeNull();
+  });
+
+  it('reports the worst area first', () => {
+    const tasks = new Map<string, Task>();
+    // "api": 2 planned, 3 subtasks from 2 parents = 150% ratio
+    for (let i = 0; i < 2; i++) {
+      tasks.set(`RALPH-AP${i}`, makeTask({ id: `RALPH-AP${i}`, aggregate: 'api' }));
+    }
+    for (let i = 0; i < 3; i++) {
+      tasks.set(`RALPH-AS${i}`, makeTask({ id: `RALPH-AS${i}`, aggregate: 'api', parentId: `RALPH-AP${i % 2}` }));
+    }
+    // "ui": 3 planned, 2 subtasks from 2 parents = 67% ratio
+    for (let i = 0; i < 3; i++) {
+      tasks.set(`RALPH-UP${i}`, makeTask({ id: `RALPH-UP${i}`, aggregate: 'ui' }));
+    }
+    for (let i = 0; i < 2; i++) {
+      tasks.set(`RALPH-US${i}`, makeTask({ id: `RALPH-US${i}`, aggregate: 'ui', parentId: `RALPH-UP${i}` }));
+    }
+
+    const result = detectPlanDrift(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.data.area).toBe('api');
+  });
+
+  it('uses domain as fallback', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 2; i++) {
+      tasks.set(`RALPH-P${i}`, makeTask({ id: `RALPH-P${i}`, domain: 'billing' }));
+    }
+    for (let i = 0; i < 3; i++) {
+      tasks.set(`RALPH-S${i}`, makeTask({ id: `RALPH-S${i}`, domain: 'billing', parentId: `RALPH-P${i % 2}` }));
+    }
+
+    const result = detectPlanDrift(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.data.area).toBe('billing');
+  });
+
+  it('includes suggestion to update plan', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 2; i++) {
+      tasks.set(`RALPH-P${i}`, makeTask({ id: `RALPH-P${i}`, aggregate: 'core' }));
+    }
+    for (let i = 0; i < 3; i++) {
+      tasks.set(`RALPH-S${i}`, makeTask({ id: `RALPH-S${i}`, aggregate: 'core', parentId: `RALPH-P${i % 2}` }));
+    }
+
+    const result = detectPlanDrift(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.suggestion).toContain('plan');
+    expect(result!.suggestion).toContain('core');
+  });
+
+  it('confidence scales with parent count', () => {
+    const makePlanDriftTasks = (parentCount: number) => {
+      const tasks = new Map<string, Task>();
+      for (let i = 0; i < parentCount; i++) {
+        tasks.set(`RALPH-P${i}`, makeTask({ id: `RALPH-P${i}`, aggregate: 'api' }));
+      }
+      // Each parent spawns 2 subtasks
+      for (let i = 0; i < parentCount * 2; i++) {
+        tasks.set(`RALPH-S${i}`, makeTask({ id: `RALPH-S${i}`, aggregate: 'api', parentId: `RALPH-P${i % parentCount}` }));
+      }
+      return tasks;
+    };
+
+    const result2 = detectPlanDrift(makeContext({ tasks: makePlanDriftTasks(2) }));
+    const result5 = detectPlanDrift(makeContext({ tasks: makePlanDriftTasks(5) }));
+    expect(result2).not.toBeNull();
+    expect(result5).not.toBeNull();
+    expect(result5!.confidence).toBeGreaterThan(result2!.confidence);
+  });
+
+  it('is included in detectPatterns detector array', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 2; i++) {
+      tasks.set(`RALPH-P${i}`, makeTask({ id: `RALPH-P${i}`, aggregate: 'api' }));
+    }
+    for (let i = 0; i < 3; i++) {
+      tasks.set(`RALPH-S${i}`, makeTask({ id: `RALPH-S${i}`, aggregate: 'api', parentId: `RALPH-P${i % 2}` }));
+    }
+
+    const result = detectPatterns(makeContext({ tasks, minConfidence: 0 }));
+    const drift = result.patterns.find(p => p.type === 'plan_drift');
+    expect(drift).toBeDefined();
+  });
+});
+
+// =============================================================================
+// Knowledge Staleness Detector
+// =============================================================================
+
+describe('knowledge staleness detection', () => {
+  it('detects when most file changes are in uncategorized areas', () => {
+    const metrics: TaskMetrics[] = [];
+    // 4 tasks with no aggregate/domain, 10 files each = 40 unknown files
+    for (let i = 0; i < 4; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-U${String(i + 1).padStart(3, '0')}`,
+        filesChanged: 10,
+      }));
+    }
+    // 2 tasks with aggregate, 5 files each = 10 known files
+    for (let i = 0; i < 2; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-K${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        filesChanged: 5,
+      }));
+    }
+    // unknownRatio = 40/50 = 80% > 40%
+
+    const result = detectKnowledgeStaleness(makeContext({ metrics }));
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('knowledge_staleness');
+    expect(result!.data.unknownRatio).toBeCloseTo(0.8);
+    expect(result!.data.unknownFiles).toBe(40);
+    expect(result!.data.unknownTasks).toBe(4);
+  });
+
+  it('does not detect staleness when unknown ratio <= 40%', () => {
+    const metrics: TaskMetrics[] = [];
+    // 3 unknown tasks with 5 files each = 15 unknown
+    for (let i = 0; i < 3; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-U${i}`,
+        filesChanged: 5,
+      }));
+    }
+    // 5 known tasks with 10 files each = 50 known
+    for (let i = 0; i < 5; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-K${i}`,
+        aggregate: 'api',
+        filesChanged: 10,
+      }));
+    }
+    // unknownRatio = 15/65 ≈ 23%
+
+    const result = detectKnowledgeStaleness(makeContext({ metrics }));
+    expect(result).toBeNull();
+  });
+
+  it('does not detect staleness with fewer than 3 unknown tasks', () => {
+    const metrics: TaskMetrics[] = [
+      makeMetric({ taskId: 'RALPH-U1', filesChanged: 100 }),
+      makeMetric({ taskId: 'RALPH-U2', filesChanged: 100 }),
+    ];
+
+    const result = detectKnowledgeStaleness(makeContext({ metrics }));
+    expect(result).toBeNull();
+  });
+
+  it('ignores metrics with zero or no filesChanged', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 5; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-U${i}`,
+        filesChanged: 0,
+      }));
+    }
+
+    const result = detectKnowledgeStaleness(makeContext({ metrics }));
+    expect(result).toBeNull();
+  });
+
+  it('tasks with domain are not counted as unknown', () => {
+    const metrics: TaskMetrics[] = [];
+    // 3 tasks with domain (not aggregate) are still categorized
+    for (let i = 0; i < 3; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-D${i}`,
+        domain: 'billing',
+        filesChanged: 10,
+      }));
+    }
+    // 3 tasks with no classification
+    for (let i = 0; i < 3; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-U${i}`,
+        filesChanged: 10,
+      }));
+    }
+    // unknownRatio = 30/60 = 50% > 40%
+
+    const result = detectKnowledgeStaleness(makeContext({ metrics }));
+    expect(result).not.toBeNull();
+    expect(result!.data.unknownTasks).toBe(3);
+    expect(result!.data.totalTasks).toBe(6);
+  });
+
+  it('includes suggestion about spec coverage', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 4; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-U${i}`,
+        filesChanged: 10,
+      }));
+    }
+
+    const result = detectKnowledgeStaleness(makeContext({ metrics }));
+    expect(result).not.toBeNull();
+    expect(result!.suggestion).toContain('spec');
+  });
+
+  it('confidence scales with unknown task count', () => {
+    const makeStaleMetrics = (unknownCount: number) => {
+      const metrics: TaskMetrics[] = [];
+      for (let i = 0; i < unknownCount; i++) {
+        metrics.push(makeMetric({
+          taskId: `RALPH-U${i}`,
+          filesChanged: 10,
+        }));
+      }
+      return metrics;
+    };
+
+    const result3 = detectKnowledgeStaleness(makeContext({ metrics: makeStaleMetrics(3) }));
+    const result8 = detectKnowledgeStaleness(makeContext({ metrics: makeStaleMetrics(8) }));
+    expect(result3).not.toBeNull();
+    expect(result8).not.toBeNull();
+    expect(result8!.confidence).toBeGreaterThan(result3!.confidence);
+  });
+
+  it('is included in detectPatterns detector array', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 4; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-U${i}`,
+        filesChanged: 10,
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics, minConfidence: 0 }));
+    const stale = result.patterns.find(p => p.type === 'knowledge_staleness');
+    expect(stale).toBeDefined();
+  });
+
+  it('description mentions coverage', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 4; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-U${i}`,
+        filesChanged: 10,
+      }));
+    }
+
+    const result = detectKnowledgeStaleness(makeContext({ metrics }));
+    expect(result).not.toBeNull();
+    expect(result!.description).toContain('coverage');
   });
 });
