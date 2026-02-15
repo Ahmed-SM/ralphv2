@@ -9,6 +9,7 @@ Build Ralph: a self-evolving agentic delivery system that reads specs, extracts 
 ## Phases
 
 ### Phase 1: Foundation ✅ COMPLETE
+
 > Establish self-hosting structure
 
 - [x] Create directory structure
@@ -30,6 +31,7 @@ Build Ralph: a self-evolving agentic delivery system that reads specs, extracts 
 - [x] Create runtime scaffolding → [runtime/](./runtime/)
 
 ### Phase 2: Task Discovery ✅ COMPLETE
+
 > Extract tasks from markdown automatically
 
 - [x] Implement markdown parser → [skills/discovery/parse-markdown.ts](./skills/discovery/parse-markdown.ts)
@@ -39,6 +41,7 @@ Build Ralph: a self-evolving agentic delivery system that reads specs, extracts 
 - [x] Output: tasks.jsonl populated (67 tasks extracted)
 
 ### Phase 3: Tracker Sync ✅ COMPLETE
+
 > Push tasks to Jira (and other trackers)
 
 - [x] Implement tracker abstraction → [skills/normalize/tracker-interface.ts](./skills/normalize/tracker-interface.ts)
@@ -49,6 +52,7 @@ Build Ralph: a self-evolving agentic delivery system that reads specs, extracts 
 - [ ] Test with Jira (requires credentials configuration)
 
 ### Phase 4: Git Watcher ✅ COMPLETE
+
 > Track commits and update task status
 
 - [x] Implement commit parser → [skills/track/parse-commits.ts](./skills/track/parse-commits.ts)
@@ -59,6 +63,7 @@ Build Ralph: a self-evolving agentic delivery system that reads specs, extracts 
 - [x] Test with actual git repo and commits → [skills/track/git-watcher-live.integration.test.ts](./skills/track/git-watcher-live.integration.test.ts)
 
 ### Phase 5: Learning Layer ✅ COMPLETE
+
 > Accumulate patterns, improve over time
 
 - [x] Implement metrics recorder → [skills/track/record-metrics.ts](./skills/track/record-metrics.ts)
@@ -69,6 +74,7 @@ Build Ralph: a self-evolving agentic delivery system that reads specs, extracts 
 - [x] Output: Self-improving system
 
 ### Phase 6: Just-Bash Integration ✅ COMPLETE
+
 > Sandboxed execution environment
 
 - [x] Create runtime executor → [runtime/executor.ts](./runtime/executor.ts)
@@ -83,6 +89,7 @@ Build Ralph: a self-evolving agentic delivery system that reads specs, extracts 
 **Improvement Review CLI Implemented**
 
 Ralph v1 MVP is now functional with:
+
 - Task discovery from markdown specs
 - Tracker sync (Jira, GitHub Issues, Linear adapters)
 - Git activity watching
@@ -97,6 +104,7 @@ Ralph v1 MVP is now functional with:
 - CLI commands: run, discover, sync, status, learn, dashboard, review, approve, reject
 
 ### Test Coverage (Phase 7) ✅ COMPLETE
+
 - [x] parse-markdown.ts — 12 tests (parsing, metadata extraction, task list flattening)
 - [x] extract-tasks.ts — 19 tests (task extraction, ID generation, type inference, epic parsing)
 - [x] parse-commits.ts — 36 tests (git log parsing, task ID extraction, action inference, branch parsing)
@@ -105,40 +113,49 @@ Ralph v1 MVP is now functional with:
 - [x] loop.ts (deriveTaskState, isBlocked) — 17 tests (operation replay, task blocking logic)
 
 ### Test Coverage (Phase 8) ✅ COMPLETE
+
 - [x] resolve-citations.ts — 20 tests (citation resolution, spec enrichment, path resolution, spec validation)
 - [x] detect-patterns.ts — 33 tests (estimation drift, task clustering, blocking chains, bug hotspots, iteration anomalies, velocity trends, bottlenecks, complexity signals, summary building)
 - [x] record-metrics.ts — 30 tests (task metric recording, aggregate computation, JSONL persistence, period formatting)
 
 ### Bug Fix
+
 - [x] Fixed `extractText` in parse-markdown.ts to handle `inlineCode` nodes (backtick text was silently dropped)
 
 ### Exported for Testability
+
 - [x] Exported `deriveTaskState` and `isBlocked` from runtime/loop.ts
 
 ### Test Coverage (Phase 9) ✅ COMPLETE
+
 - [x] sandbox.ts — 55 tests (file overlay read/write/delete, pending changes, flush to disk, rollback, reset, path allow/deny, command allow/deny/limits, resource tracking, execution log, caching, env vars)
 - [x] executor.ts — 24 tests (createExecutor factory, bash delegation, readFile/writeFile through sandbox, flush/rollback, getPendingChanges, getSandbox, GitOperations: status/add/commit/log/diff/branch/checkout)
 
 ### Test Coverage (Phase 10) ✅ COMPLETE
+
 - [x] tracker-interface.ts — 26 tests (taskToIssue mapping, formatDescription, mapStatusToRalph, factory registration/creation)
 - [x] create-issue.ts — 16 tests (single/batch issue creation, subtask handling, hierarchy sorting, link operation generation, error handling)
 - [x] update-status.ts — 21 tests (status updates, transition matching, push/pull/auto sync, batch sync, operation generation)
 - [x] sync.ts — 15 tests (syncToTracker push, syncFromTracker pull, bidirectional sync, filtering, force updates, error recording)
 
 ### Property-Based Tests (Phase 11) ✅ COMPLETE
+
 - [x] parse-markdown.ts — 14 property tests (arbitrary string resilience, heading extraction invariants, task checkbox round-trip, parentHeading consistency, flatten monotonicity, link extraction, nested children)
 - [x] extract-tasks.ts — 18 property tests (ID format/uniqueness, generateTaskId↔parseTaskId inverse, getNextTaskId correctness, status mapping, type inference, stats invariants, deduplication, epic detection, timestamp propagation)
 - [x] parse-commits.ts — 28 property tests (git log parsing resilience, SHA format, shortSha derivation, simple format parsing, task ID extraction/normalization/deduplication/case-insensitivity, custom prefixes, action inference, commit partitioning, branch detection, buildGitLogCommand)
 - [x] loop.ts (deriveTaskState, isBlocked) — 19 property tests (event sourcing create/update/link/relate, overwrite semantics, silent ignore of missing tasks, relationship accumulation, replay determinism, last-write-wins ordering, blocking logic with done/cancelled/active/missing blockers, mixed blocker scenarios)
 
 ### Unit Tests (Phase 12) ✅ COMPLETE
+
 - [x] improve-agents.ts — 46 tests (generateImprovements for all pattern types: estimation_drift, bug_hotspot, blocking_chain, iteration_anomaly, bottleneck, velocity_trend; metrics-based proposals; summary building; evidence/confidence propagation; saveProposals JSONL persistence; loadPendingProposals filtering; printProposals smoke tests)
 
 ### Integration Tests (Phase 13) ✅ COMPLETE
+
 - [x] Discovery pipeline — 16 integration tests (full discoverTasks end-to-end: markdown→parse→extract→resolve→output, RALPH ID assignment, status mapping, operation generation, citation resolution, dry-run/write modes, deduplication across runs, edge cases)
 - [x] Git watcher pipeline — 18 integration tests (full watchGitActivity end-to-end: git log→parse→link→infer→output, task reference extraction, commit filtering, status inference, anomaly detection, persistence, custom task prefix, orphan refs, edge cases)
 
 ### Live Git Integration Tests (Phase 14) ✅ COMPLETE
+
 - [x] Live git log parsing — 5 tests (parseSimpleGitLog and parseGitLog against real repo output, SHA validation, date ordering, max-count, format cross-validation)
 - [x] Live git command building — 2 tests (buildGitLogCommand produces executable commands, since-date filtering against real history)
 - [x] Live task ref extraction — 2 tests (extractTaskRefs gracefully handles repos without task IDs, inferAction classifies real commit subjects)
@@ -148,6 +165,7 @@ Ralph v1 MVP is now functional with:
 - [x] Live filterNewCommits — 2 tests (progress event filtering with real SHAs, empty progress passthrough)
 
 ### GitHub Issues Adapter (Phase 15) ✅ COMPLETE
+
 - [x] Implement GitHubIssuesAdapter → [integrations/github-issues/adapter.ts](./integrations/github-issues/adapter.ts)
 - [x] Issue CRUD (create, get, update, find with filters)
 - [x] Milestone creation for epics
@@ -160,6 +178,7 @@ Ralph v1 MVP is now functional with:
 - [x] Unit tests — 60 tests (constructor, auth, healthCheck, CRUD, transitions, subtasks, linking, comments, type inference, error handling, registration)
 
 ### Linear Adapter (Phase 16) ✅ COMPLETE
+
 - [x] Implement LinearAdapter → [integrations/linear/adapter.ts](./integrations/linear/adapter.ts)
 - [x] GraphQL API integration (queries and mutations)
 - [x] Issue CRUD (create, get, update, find with filters)
@@ -175,6 +194,7 @@ Ralph v1 MVP is now functional with:
 - [x] Unit tests — 70 tests (constructor, auth headers, healthCheck, CRUD, transitions, subtasks, linking, comments, type inference, project mapping, error handling, dry-run, registration)
 
 ### Jira Adapter Unit Tests (Phase 17) ✅ COMPLETE
+
 - [x] Unit tests — 77 tests → [integrations/jira/adapter.test.ts](./integrations/jira/adapter.test.ts)
 - [x] Constructor (name, baseUrl defaults)
 - [x] Auth headers (Basic email:token, Basic username:password, token, OAuth Bearer, Content-Type/Accept)
@@ -196,6 +216,7 @@ Ralph v1 MVP is now functional with:
 - [x] Registration (jira factory registered in tracker registry)
 
 ### Loop Orchestration Tests (Phase 18) ✅ COMPLETE
+
 - [x] Exported loop internals for testability (pickNextTask, executeTaskLoop, executeIteration, updateTaskStatus, recordTaskCompletion, readJsonl, appendJsonl)
 - [x] readJsonl — 7 tests (empty/missing/whitespace files, single/multiple line parsing, blank line skipping, TaskOperation parsing)
 - [x] appendJsonl — 3 tests (file creation, append to existing, content preservation)
@@ -208,19 +229,21 @@ Ralph v1 MVP is now functional with:
 - [x] Total: 59 new tests (814 total across 27 test files)
 
 ### Tracker Sync in Main Loop (Phase 19) ✅ COMPLETE
+
 - [x] Implemented `syncTaskToTracker()` in runtime/loop.ts — syncs completed/failed tasks to external tracker
-- [x] Implemented `getTrackerAuth()` — reads tracker credentials from RALPH_ or plain env vars
+- [x] Implemented `getTrackerAuth()` — reads tracker credentials from RALPH\_ or plain env vars
 - [x] Implemented `loadTrackerAdapter()` — dynamically loads adapter modules for side-effect registration
 - [x] Wired tracker sync into `runLoop()` step 7 (was a TODO placeholder)
 - [x] Handles autoCreate (creates issues for unlinked tasks), autoTransition (transitions linked issues), autoComment (adds completion/failure comments)
 - [x] Graceful error handling — tracker failures are logged but never crash the loop
 - [x] Records link operations in tasks.jsonl when new issues are created
 - [x] Exported `syncTaskToTracker` and `getTrackerAuth` from runtime/index.ts
-- [x] getTrackerAuth — 6 tests (missing creds, RALPH_ prefix, fallback env vars, hyphen→underscore, linear type, token-only auth)
+- [x] getTrackerAuth — 6 tests (missing creds, RALPH\_ prefix, fallback env vars, hyphen→underscore, linear type, token-only auth)
 - [x] syncTaskToTracker — 16 tests (skip when flags disabled, skip on missing creds, create issue, record link op, transition issue, success comment, failure comment, no-create without flag, no-transition without flag, no-comment without flag, error resilience, error logging, missing config file, unmapped status, combined transition+comment, non-Error thrown objects)
 - [x] Total: 22 new tests (836 total across 27 test files)
 
 ### LLM Integration (Phase 20) ✅ COMPLETE
+
 - [x] Added LLM types to types/index.ts (LLMProvider, LLMMessage, LLMResponse, LLMToolCall, LLMTool, LLMConfig)
 - [x] Created runtime/llm.ts — LLM provider abstraction, prompt builder, tool definitions, action executor, response interpreter
 - [x] AGENT_TOOLS — 5 sandbox tools (read_file, write_file, run_bash, task_complete, task_blocked)
@@ -248,6 +271,7 @@ Ralph v1 MVP is now functional with:
 - [x] Total: 72 new tests (908 total across 28 test files)
 
 ### Concrete LLM API Clients (Phase 21) ✅ COMPLETE
+
 - [x] Implement AnthropicProvider → [runtime/llm-providers.ts](./runtime/llm-providers.ts)
   - Anthropic Messages API integration (POST /v1/messages)
   - System prompt extraction (top-level `system` field, not in messages)
@@ -285,6 +309,7 @@ Ralph v1 MVP is now functional with:
 - [x] Total: 77 new tests (985 total across 29 test files)
 
 ### Sandbox Rollback on Task Failure (Phase 22) ✅ COMPLETE
+
 - [x] Implemented sandbox rollback in `runLoop()` — calls `executor.rollback()` when a task fails before marking it blocked
 - [x] Aligns with loop-mechanics spec: "If iteration fails: Discard filesystem changes (OverlayFS)"
 - [x] Prevents failed task changes from polluting sandbox state for subsequent tasks
@@ -292,6 +317,7 @@ Ralph v1 MVP is now functional with:
 - [x] Total: 5 new tests (990 total across 29 test files)
 
 ### CLI --dry-run and --task Flags (Phase 23) ✅ COMPLETE
+
 - [x] Implemented `--dry-run` flag — skips git commits and tracker sync, logs `[DRY RUN]` prefix
 - [x] Implemented `--task=<id>` flag — targets a single task by ID, sets maxTasksPerRun to 1
 - [x] Added `dryRun` and `taskFilter` optional fields to `LoopConfig` type
@@ -303,6 +329,7 @@ Ralph v1 MVP is now functional with:
 - [x] Total: 15 new tests (1005 total across 29 test files)
 
 ### LLM Cost Tracking & Budget Enforcement (Phase 24) ✅ COMPLETE
+
 - [x] Added `LLMUsage` type (inputTokens, outputTokens) to types/index.ts
 - [x] Added `usage?: LLMUsage` to `LLMResponse` — providers now return token counts
 - [x] Added `maxCostPerRun` to `LoopConfig` — spec-aligned global cost limit ($50 default)
@@ -323,6 +350,7 @@ Ralph v1 MVP is now functional with:
 - [x] Total: 21 new tests (1026 total across 29 test files)
 
 ### CLI Entry Point Refactor (Phase 25) ✅ COMPLETE
+
 - [x] Extracted CLI logic from runtime/index.ts into runtime/cli.ts (testable module)
 - [x] Created root cli.ts — shebang entry point for `npx ralph` / `npm install -g ralph`
 - [x] package.json bin → dist/cli.js now has a matching source file
@@ -345,6 +373,7 @@ Ralph v1 MVP is now functional with:
 - [x] Total: 60 new tests (1086 total across 30 test files)
 
 ### Loop Hooks / Observability (Phase 26) ✅ COMPLETE
+
 - [x] Added `LoopHooks` interface to types/index.ts (onTaskStart, onIterationStart, onAction, onIterationEnd, onTaskEnd, onAnomaly)
 - [x] Added optional `hooks` field to `LoopContext`
 - [x] Implemented `invokeHook()` — safe hook invocation with error catching (hook errors are logged, never crash the loop)
@@ -365,6 +394,7 @@ Ralph v1 MVP is now functional with:
 - [x] Total: 29 new tests (1115 total across 31 test files)
 
 ### Task Schema Validation (Phase 27) ✅ COMPLETE
+
 - [x] Implement validate-task.ts → [skills/discovery/validate-task.ts](./skills/discovery/validate-task.ts)
 - [x] Status lifecycle transitions (ALLOWED_TRANSITIONS map from spec lifecycle diagram)
 - [x] isValidTransition / getAllowedTransitions — lifecycle-aware transition checks
@@ -388,6 +418,7 @@ Ralph v1 MVP is now functional with:
 - [x] Total: 77 new tests (1192 total across 32 test files)
 
 ### Completion Detection Methods (Phase 28) ✅ COMPLETE
+
 - [x] Added `CompletionCriteria` type to types/index.ts (file_exists, test_passing, validate)
 - [x] Added optional `completion` field to `Task` interface
 - [x] Implement completion.ts → [runtime/completion.ts](./runtime/completion.ts)
@@ -410,6 +441,7 @@ Ralph v1 MVP is now functional with:
 - [x] Total: 49 new tests (1241 total across 33 test files)
 
 ### Missing Pattern Detectors (Phase 29) ✅ COMPLETE
+
 - [x] Implement detectTestGaps → [skills/discovery/detect-patterns.ts](./skills/discovery/detect-patterns.ts)
   - Groups tasks by aggregate/domain, computes test-to-total task ratio
   - Detects areas with < 20% test coverage and >= 3 non-test tasks
@@ -435,6 +467,7 @@ Ralph v1 MVP is now functional with:
 - [x] Total: 29 new tests (1270 total across 33 test files)
 
 ### Git Watcher Loop Integration (Phase 30) ✅ COMPLETE
+
 - [x] Added `GitWatcherConfig` type to types/index.ts (enabled, taskPrefix, minConfidence, maxCommits, detectAnomalies)
 - [x] Added optional `gitWatcher` field to `RuntimeConfig`
 - [x] Implemented `runGitWatcher()` in runtime/loop.ts — bridges LoopContext to WatchContext, delegates to watchGitActivity
@@ -451,6 +484,7 @@ Ralph v1 MVP is now functional with:
 - [x] Total: 20 new tests (1290 total across 34 test files)
 
 Next steps for production readiness:
+
 1. ~~Add LLM integration for intelligent task execution~~ ✅ Done
 2. ~~Implement concrete LLM API client (Anthropic/OpenAI HTTP adapter)~~ ✅ Done
 3. ~~Sandbox rollback on task failure~~ ✅ Done
@@ -467,7 +501,22 @@ Next steps for production readiness:
 14. ~~Standalone learn CLI command~~ ✅ Done
 15. ~~Metrics dashboard CLI command~~ ✅ Done
 
+Additional production-readiness priorities:
+- [ ] 3. Create a "Project Adapter Contract"
+  - Standard inputs for any target repo: `AGENTS.md`, `implementation-plan.md`, `specs/*.md`, `ralph.config.json`, test command, build command, policy file.
+  - No custom code first; config-only onboarding.
+- [ ] 5. Add hard safety rails before autonomy increase
+  - Policy engine for command/file allowlists.
+  - Mandatory human approval for destructive ops, dependency changes, production-impacting edits.
+  - Automatic rollback on failing checks.
+- [ ] 7. Standardize delivery workflow templates
+  - Reusable task patterns: bugfix, feature, migration, test hardening.
+  - L2: Auto-commit on green.
+  - L3: Auto-PR with policy gates.
+  - Promote repo only when KPI thresholds are met for N consecutive runs.
+
 ### Standalone Sync CLI Command (Phase 31) ✅ COMPLETE
+
 - [x] Implemented `runSync()` in runtime/cli.ts — standalone `ralph sync` command
 - [x] Loads ralph.config.json and tracker config from configPath
 - [x] Resolves tracker auth from env via `getTrackerAuth()` (reuses loop.ts function)
@@ -485,6 +534,7 @@ Next steps for production readiness:
 - [x] Total: 16 new tests (1306 total across 34 test files)
 
 ### Standalone Learn CLI Command (Phase 32) ✅ COMPLETE
+
 - [x] Implemented `runLearn()` in runtime/cli.ts — standalone `ralph learn` command
 - [x] Loads ralph.config.json and checks `learning.enabled` flag
 - [x] Reads `minConfidence` from config (default 0.7)
@@ -507,6 +557,7 @@ Next steps for production readiness:
 - [x] Total: 17 new tests (1323 total across 34 test files)
 
 ### Retry onFailure Mode & README Fix (Phase 33) ✅ COMPLETE
+
 - [x] Implemented `onFailure: 'retry'` mode in `runLoop()` → [runtime/loop.ts](./runtime/loop.ts)
   - Re-attempts failed tasks up to `maxRetries` times before marking as blocked
   - Rollback sandbox between retry attempts to ensure clean state
@@ -535,6 +586,7 @@ Next steps for production readiness:
 - [x] Total: 13 new tests (1380 total across 35 test files)
 
 ### Improvement Auto-Application (Phase 34) ✅ COMPLETE
+
 - [x] Implement apply-improvements.ts → [skills/discovery/apply-improvements.ts](./skills/discovery/apply-improvements.ts)
   - `makeBranchName()` — generates `ralph/learn-{timestamp}` branch names per spec
   - `makeCommitMessage()` — formats `RALPH-LEARN: {title}` commit messages per spec
@@ -563,6 +615,7 @@ Next steps for production readiness:
 - [x] Total: 44 new tests (1424 total across 36 test files)
 
 ### Task Priority Support (Phase 35) ✅ COMPLETE
+
 - [x] Added `priority?: number` field to `Task` interface in types/index.ts (higher number = higher priority, default: 0)
 - [x] Updated `pickNextTask()` in runtime/loop.ts — sorts by priority after in_progress status, before creation time
 - [x] Aligns with loop-mechanics spec: "Highest priority pending task" → "Oldest if same priority"
@@ -587,6 +640,7 @@ Next steps for production readiness:
 - [x] Total: 12 new tests (1436 total across 36 test files)
 
 ### Tracker Pull Sync in Main Loop (Phase 36) ✅ COMPLETE
+
 - [x] Added `autoPull` field to `TrackerRuntimeConfig` in types/index.ts
 - [x] Implemented `pullFromTracker()` in runtime/loop.ts — pulls external tracker status changes into Ralph's task state
   - Loads tracker config and auth from environment (reuses `getTrackerAuth()`)
@@ -617,6 +671,7 @@ Next steps for production readiness:
 - [x] Total: 13 new tests (1449 total across 36 test files)
 
 ### Tracker Sync Conflict Resolution & Logging (Phase 37) ✅ COMPLETE
+
 - [x] Added `TrackerConflictEvent` type to types/index.ts — logs conflict field, ralph/tracker values, and resolution strategy
 - [x] Updated `LearningEvent` union type to include `TrackerConflictEvent`
 - [x] Updated `pullFromTracker()` in runtime/loop.ts with conflict detection and logging:
@@ -638,6 +693,7 @@ Next steps for production readiness:
 - [x] Total: 10 new tests (1414 total across 35 test files)
 
 ### Discovered Task Lifecycle Promotion (Phase 38) ✅ COMPLETE
+
 - [x] Fixed `discovered → in_progress` lifecycle violation in `runLoop()` → [runtime/loop.ts](./runtime/loop.ts)
   - `pickNextTask()` selects `discovered` tasks as candidates, but spec lifecycle only allows `discovered → pending → in_progress`
   - Added automatic promotion: when a picked task has status `discovered`, first transitions to `pending` before `in_progress`
@@ -655,6 +711,7 @@ Next steps for production readiness:
 - [x] Total: 7 new tests (1423 total across 35 test files)
 
 ### Metrics Dashboard CLI Command (Phase 39) ✅ COMPLETE
+
 - [x] Implemented `ralph dashboard` CLI command → [runtime/cli.ts](./runtime/cli.ts)
   - Reads `state/learning.jsonl`, `state/tasks.jsonl`, `state/progress.jsonl`
   - Generates formatted learning summary report per specs/learning-system.md
@@ -675,6 +732,7 @@ Next steps for production readiness:
 - [x] Total: 42 new tests (1465 total across 35 test files)
 
 ### Notification System (Phase 40) ✅ COMPLETE
+
 - [x] Implement notifications.ts → [runtime/notifications.ts](./runtime/notifications.ts)
   - `formatNotification()` — formats anomaly/task_complete/limit_reached events into human-readable payloads
   - `sendConsole()` — console channel with severity-based prefixes (!!!/!!/i)
@@ -706,13 +764,14 @@ Next steps for production readiness:
 - [x] Total: 51 new tests (1516 total across 36 test files)
 
 ### Failure Mode Pattern Detector (Phase 41) ✅ COMPLETE
+
 - [x] Implement `detectFailureModes()` → [skills/discovery/detect-patterns.ts](./skills/discovery/detect-patterns.ts)
   - Groups failed/blocked/cancelled tasks by area (aggregate/domain) to find recurring failure concentrations
   - Falls back to grouping by task type when no single area has >= 2 failures
   - Combines task status (blocked/cancelled) with metrics blockers > 0 for comprehensive failure detection
   - Deduplicates tasks that appear in both task map and metrics
   - Computes failure rate when total tasks in area is known
-  - Confidence scales with failure count (min 2 failures to trigger, confidence = min(count/6, 1) * 0.8)
+  - Confidence scales with failure count (min 2 failures to trigger, confidence = min(count/6, 1) \* 0.8)
   - Reports top failure area/type, failure count, total failures, failure rate, suggestion
 - [x] Added `detectFailureModes` to `detectPatterns()` detector array (was missing — `failure_mode` was in PatternType but had no detector)
 - [x] Exported `detectFailureModes` for direct testing
@@ -729,6 +788,7 @@ Next steps for production readiness:
 - [x] Total: 19 new tests (1535 total across 36 test files)
 
 ### Improvement Review CLI (Phase 42) ✅ COMPLETE
+
 - [x] Implement `ralph review` CLI command → [runtime/cli.ts](./runtime/cli.ts)
   - Lists all pending improvement proposals with full details
   - Shows ID, title, target, section, priority, confidence, rationale, evidence, description
@@ -771,6 +831,7 @@ Next steps for production readiness:
 - [x] Total: 47 new tests (1582 total across 36 test files)
 
 ### Inductive External Delivery OS (Phase 43) 🟡 PLANNED
+
 > Prove Ralph can deliver other systems end-to-end with the same markdown-native workflow.
 
 - [ ] **Define induction invariant (system-level contract):**
@@ -820,23 +881,27 @@ Phase 43 (Inductive External Delivery) 🟡
 ## Success Criteria
 
 Phase 1 complete: ✅
+
 - [x] All specs written
 - [x] All agent instructions written
 - [x] State files initialized
 - [x] Ralph can read this plan and identify next task
 
 Phase 2 complete: ✅
+
 - [x] Ralph extracts tasks from this file
 - [x] tasks.jsonl contains structured tasks
 - [x] Tasks have proper hierarchy (phases → tasks → subtasks)
 
 Phase 3 complete: ✅
+
 - [x] Tracker interface defined
 - [x] Jira adapter implemented
 - [x] Sync CLI operational (preview mode works)
 - [ ] Live Jira test (pending credentials)
 
 Phase 4 complete: ✅
+
 - [x] Commit parser extracts task IDs
 - [x] Git activity linked to tasks
 - [x] Status inference from commits
@@ -844,12 +909,14 @@ Phase 4 complete: ✅
 - [x] Live git test (22 integration tests against real repo)
 
 Phase 5 complete: ✅
+
 - [x] Metrics recorded from execution
 - [x] Patterns detected in history
 - [x] Improvement proposals generated
 - [x] Learning CLI operational
 
 Phase 6 complete: ✅
+
 - [x] Sandbox configuration implemented
 - [x] File change tracking (overlay behavior)
 - [x] Command allowlisting/denylisting
@@ -857,6 +924,7 @@ Phase 6 complete: ✅
 - [x] Autonomous loop execution tested
 
 Phase 43 planned: 🟡
+
 - [ ] Induction invariant encoded as enforceable runtime contract
 - [ ] Bootstrap generation of `specs/*.md` and `implementation-plan.md` for external repos
 - [ ] Human review required for generated plans before execution
@@ -865,5 +933,5 @@ Phase 43 planned: 🟡
 
 ---
 
-*Status: Ralph v1 MVP complete; Phase 43 planned for external-system induction*
-*Human review: Required for generated plans/specs and production deployment*
+_Status: Ralph v1 MVP complete; Phase 43 planned for external-system induction_
+_Human review: Required for generated plans/specs and production deployment_

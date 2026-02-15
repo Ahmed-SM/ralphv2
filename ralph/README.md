@@ -174,12 +174,16 @@ npm run learn
 
 ## Current Status
 
-- ✅ Phases 1-6 complete: Foundation, discovery, tracker sync, git watcher, learning layer, sandbox execution
-- ✅ Phases 7-18 complete: Expanded unit/property/integration/live-git coverage and loop orchestration hardening
-- ✅ Phase 19 complete: Tracker sync integrated into main runtime loop
-- ✅ Phase 20 complete: LLM orchestration (provider abstraction, tool calls, iteration execution)
-- ✅ Phase 21 complete: Concrete Anthropic/OpenAI provider clients
-- ✅ Human-in-the-loop improvement review CLI implemented (`review`, `approve`, `reject`)
+- ✅ Ralph v1 MVP complete
+- ✅ Phases 1-42 complete (foundation through improvement review CLI)
+- ✅ Test suite: 1582 tests across 36 test files
+- ✅ CLI commands available: `run`, `discover`, `sync`, `status`, `learn`, `dashboard`, `review`, `approve`, `reject`
+- 🟡 Phase 43 planned: Inductive External Delivery OS
+- ⏳ Remaining live validation: Jira credentials, external-system induction pilots
+- ⏳ Additional production-readiness priorities tracked in `implementation-plan.md`:
+  - Project Adapter Contract (config-only onboarding)
+  - Hard safety rails before autonomy increase
+  - Standardized delivery workflow templates
 
 ## References
 
