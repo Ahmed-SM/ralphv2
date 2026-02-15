@@ -8,6 +8,10 @@ Ralph is a self-evolving agentic delivery system. It reads markdown, extracts ta
 
 Ralph governs itself using this file.
 
+Ralph has two operating goals:
+- `Ralph-Core`: improve Ralph's own capabilities safely.
+- `Ralph-Delivery`: deliver all kinds of external software projects with human-on-the-loop governance.
+
 ## Core Philosophy
 
 1. **Markdown is the source of truth** — specs, plans, and agent instructions are markdown

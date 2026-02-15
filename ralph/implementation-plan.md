@@ -833,6 +833,27 @@ Additional production-readiness priorities:
 ### Inductive External Delivery OS (Phase 43) 🟡 PLANNED
 
 > Prove Ralph can deliver other systems end-to-end with the same markdown-native workflow.
+> Goal: an agentic delivery system for all kinds of projects, with human-on-the-loop governance at every autonomy level.
+
+#### Operating Modes (Core vs Delivery)
+
+Ralph runs in two explicit modes to avoid goal and policy drift:
+
+- `Ralph-Core` (self-evolution)
+  - Scope: Ralph's own repository and platform capabilities.
+  - Primary outcome: reliability and capability improvements in the Ralph system.
+  - Governance: stricter review for platform-level behavior changes.
+- `Ralph-Delivery` (external project delivery)
+  - Scope: target repositories across different stacks/domains.
+  - Primary outcome: safe, repeatable delivery of scoped features and fixes.
+  - Governance: human-on-the-loop approvals for destructive, dependency, and production-impacting changes.
+
+Mode separation requirements:
+- [ ] Add `mode: "core" | "delivery"` to `ralph.config.json`.
+- [ ] Enforce policy profile by mode (command/file allowlists + approval gates).
+- [ ] Separate state by mode/repo (`state/core/*`, `state/delivery/<repo>/*`).
+- [ ] Block Ralph self-modification while in `delivery` mode unless explicitly approved.
+- [ ] Report KPIs per mode (platform health vs delivery performance).
 
 #### New Project Runbook (v1)
 

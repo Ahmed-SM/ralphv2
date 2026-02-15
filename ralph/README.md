@@ -1,6 +1,6 @@
 # Ralph — Agentic Delivery OS
 
-> A self-evolving system that reads specs, extracts tasks, syncs with trackers, watches git, and learns over time.
+> A self-evolving agentic delivery system for all kinds of software projects that reads specs, extracts tasks, syncs with trackers, watches git, and learns over time with human-on-the-loop governance.
 
 ## Philosophy
 
@@ -12,6 +12,17 @@ Ralph follows these core principles:
 4. **One task at a time** — Pick one task, loop until complete, then next (Ralph-loop)
 5. **Self-hosting** — Ralph's own development follows Ralph's rules
 6. **Human on the loop** — Autonomous execution, human observes and intervenes on anomalies
+
+## Operating Modes
+
+Ralph uses two explicit modes:
+
+- `Ralph-Core` (self-evolving mode)
+  - Improves Ralph itself (platform/runtime/spec workflow).
+  - Uses stricter review for platform-affecting behavior changes.
+- `Ralph-Delivery` (project delivery mode)
+  - Delivers features/fixes/migrations across different project types and stacks.
+  - Keeps human-on-the-loop approval gates for destructive, dependency, and production-impacting changes.
 
 ## Quick Start
 
@@ -105,6 +116,7 @@ Ralph reads markdown files and extracts tasks:
 ```markdown
 - [ ] Task description → becomes a task
 - [x] Done task → marked as complete
+
 ### Phase 1 → becomes an epic
 ```
 
@@ -215,4 +227,4 @@ npm run learn
 
 ---
 
-*Ralph is self-hosting: this project is managed by Ralph itself.*
+_Ralph is self-hosting: this project is managed by Ralph itself._
