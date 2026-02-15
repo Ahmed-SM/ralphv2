@@ -40,6 +40,7 @@ import { applyImprovements, markProposalsApplied, updateProposalStatuses, type A
 import { recordTaskMetrics, computeAggregateMetrics, appendMetricEvent, loadTaskMetrics, getCurrentPeriod, type TaskMetrics } from '../skills/track/record-metrics.js';
 import { validateOperation, type ValidationResult } from '../skills/discovery/validate-task.js';
 import { checkCompletion, createCompletionContext } from './completion.js';
+import { dispatchNotification, notifyAnomaly, notifyTaskComplete, notifyLimitReached, type NotificationDeps } from './notifications.js';
 
 export interface LoopContext {
   config: RuntimeConfig;
@@ -152,12 +153,14 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     // Check time limit
     if (Date.now() - startTime > config.loop.maxTimePerRun) {
       console.log('Time limit reached, stopping loop');
+      await notifyLimitReached('maxTimePerRun', `${((Date.now() - startTime) / 1000).toFixed(0)}s`, config.notifications).catch(() => {});
       break;
     }
 
     // Check run cost limit
     if (result.totalCost >= config.loop.maxCostPerRun) {
       console.log(`Run cost limit reached ($${result.totalCost.toFixed(4)} >= $${config.loop.maxCostPerRun}), stopping loop`);
+      await notifyLimitReached('maxCostPerRun', `$${result.totalCost.toFixed(4)}`, config.notifications).catch(() => {});
       break;
     }
 
@@ -270,6 +273,9 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
 
     // Hook: onTaskEnd
     invokeHook(context.hooks, 'onTaskEnd', task, taskSuccess);
+
+    // Notify on task completion/failure (if configured)
+    await notifyTaskComplete(task, taskSuccess, config.notifications).catch(() => {});
 
     // 6. Record learning and run analysis
     if (config.learning.enabled) {
@@ -762,13 +768,16 @@ export async function runLearningAnalysis(
         const severity = pattern.confidence >= 0.9 ? 'high'
           : pattern.confidence >= 0.7 ? 'medium'
           : 'low';
-        invokeHook(context.hooks, 'onAnomaly', {
-          type: 'anomaly_detected',
+        const anomalyEvent = {
+          type: 'anomaly_detected' as const,
           anomaly: pattern.description,
           severity,
           context: { pattern: pattern.type, ...pattern.data },
           timestamp: pattern.timestamp,
-        });
+        };
+        invokeHook(context.hooks, 'onAnomaly', anomalyEvent);
+        // Notify via configured channel
+        await notifyAnomaly(anomalyEvent, config.notifications).catch(() => {});
       }
     }
 
@@ -940,15 +949,17 @@ export async function runGitWatcher(
       console.log(`  Git watcher: ${result.inferences.length} status inferences, ${result.anomalies.length} anomalies`);
     }
 
-    // Fire onAnomaly hook for git watcher anomalies
+    // Fire onAnomaly hook and notification for git watcher anomalies
     for (const anomaly of result.anomalies) {
-      invokeHook(context.hooks, 'onAnomaly', {
-        type: 'anomaly_detected',
+      const anomalyEvent = {
+        type: 'anomaly_detected' as const,
         anomaly: anomaly.message,
         severity: anomaly.severity,
         context: { source: 'git_watcher', taskId: anomaly.taskId, anomalyType: anomaly.type, ...anomaly.data },
         timestamp: new Date().toISOString(),
-      });
+      };
+      invokeHook(context.hooks, 'onAnomaly', anomalyEvent);
+      await notifyAnomaly(anomalyEvent, context.config.notifications).catch(() => {});
     }
 
     return result;

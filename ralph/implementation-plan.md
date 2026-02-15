@@ -672,6 +672,37 @@ Next steps for production readiness:
   - parseArgs/resolveCommand — 2 tests (dashboard command parsing)
 - [x] Total: 42 new tests (1465 total across 35 test files)
 
+### Notification System (Phase 40) ✅ COMPLETE
+- [x] Implement notifications.ts → [runtime/notifications.ts](./runtime/notifications.ts)
+  - `formatNotification()` — formats anomaly/task_complete/limit_reached events into human-readable payloads
+  - `sendConsole()` — console channel with severity-based prefixes (!!!/!!/i)
+  - `sendSlack()` — Slack webhook channel with Block Kit formatting and severity emojis
+  - `sendEmail()` — email webhook channel (HTTP-to-email bridge)
+  - `shouldNotify()` — config-driven event filtering (onAnomaly, onComplete, limit_reached)
+  - `dispatchNotification()` — main dispatcher: checks config, formats, routes to channel
+  - `resolveNotificationEnv()` — reads RALPH_SLACK_WEBHOOK_URL, RALPH_EMAIL_WEBHOOK_URL, RALPH_EMAIL_TO
+  - `notifyAnomaly()`, `notifyTaskComplete()`, `notifyLimitReached()` — convenience helpers
+- [x] Wired into runLoop() — notifyTaskComplete after each task
+- [x] Wired into runLoop() — notifyLimitReached on maxTimePerRun and maxCostPerRun
+- [x] Wired into runLearningAnalysis() — notifyAnomaly on iteration_anomaly and failure_mode patterns
+- [x] Wired into runGitWatcher() — notifyAnomaly on git watcher anomalies
+- [x] Injectable NotificationDeps for testability (no real HTTP in tests)
+- [x] Graceful error handling — notification failures never crash the loop (.catch(() => {}))
+- [x] Exported from runtime/index.ts
+- [x] Unit tests — 51 tests → [runtime/notifications.test.ts](./runtime/notifications.test.ts)
+  - formatNotification — 7 tests (anomaly high/medium/low severity mapping, successful/failed task, limit reached, timestamp)
+  - sendConsole — 3 tests (critical !!!, warning !!, info i prefix)
+  - sendSlack — 7 tests (POST to webhook, Block Kit payload, rotating_light/warning/info emojis, non-ok response, fetch error, non-Error throws)
+  - sendEmail — 5 tests (POST to webhook, payload fields, non-ok response, fetch error, non-Error throws)
+  - shouldNotify — 7 tests (anomaly on/off, task_complete on/off, limit_reached with onAnomaly/onComplete/both off)
+  - resolveNotificationEnv — 3 tests (undefined defaults, RALPH_SLACK_WEBHOOK_URL, RALPH_EMAIL vars)
+  - dispatchNotification — 9 tests (skip when disabled, console/slack/email dispatch, missing slack URL, missing email URL/recipient, unknown channel, error resilience)
+  - notifyAnomaly — 2 tests (dispatch, respects onAnomaly=false)
+  - notifyTaskComplete — 3 tests (success, failure, respects onComplete=false)
+  - notifyLimitReached — 2 tests (dispatch, respects disabled flags)
+  - integration scenarios — 3 tests (full anomaly→slack, full completion→email, all disabled)
+- [x] Total: 51 new tests (1516 total across 36 test files)
+
 ## Dependencies
 
 ```

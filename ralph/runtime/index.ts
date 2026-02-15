@@ -16,6 +16,7 @@ export { executeLLMIteration, executeToolCall, buildSystemPrompt, buildIteration
 export { AnthropicProvider, OpenAIProvider, createProvider, resolveApiKey, formatAnthropicMessages, formatAnthropicTools, parseAnthropicResponse, mapAnthropicStopReason, formatOpenAIMessages, formatOpenAITools, parseOpenAIResponse, mapOpenAIFinishReason } from './llm-providers.js';
 export { parseArgs, resolveCommand, loadConfig, dispatch, runMain, runDiscover, runStatus, runDashboard, buildDashboardData, formatDashboard, replayTaskOps, HELP_TEXT, BANNER, DEFAULT_CONFIG_PATH, type ParsedArgs, type CliCommand, type CliDeps, type DashboardData } from './cli.js';
 export { checkCompletion, checkCriteria, checkTestPassing, checkFileExists, checkValidate, createCompletionContext, type CompletionCheckResult, type CompletionContext } from './completion.js';
+export { formatNotification, sendConsole, sendSlack, sendEmail, shouldNotify, dispatchNotification, notifyAnomaly, notifyTaskComplete, notifyLimitReached, resolveNotificationEnv, type NotificationEvent, type NotificationPayload, type NotificationDeps } from './notifications.js';
 
 // When executed directly (tsx runtime/index.ts), run the CLI
 const scriptPath = process.argv[1]?.replace(/\\/g, '/');
