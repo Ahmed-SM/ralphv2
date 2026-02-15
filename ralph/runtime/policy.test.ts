@@ -374,6 +374,46 @@ describe('checkFileWrite', () => {
     const result = checkFileWrite(policy, 'tests/unit/app.test.ts', workDir);
     expect(result.allowed).toBe(true);
   });
+
+  it('blocks Ralph self-modification in delivery mode without explicit approval', () => {
+    const policy = makePolicy({
+      files: {
+        allowRead: ['.'],
+        allowWrite: ['.'],
+        denyRead: ['.env', '.git/objects'],
+        denyWrite: ['.git', 'node_modules', 'dist'],
+      },
+    });
+    const result = checkFileWrite(policy, 'runtime/loop.ts', workDir);
+    expect(result.allowed).toBe(false);
+    expect(result.violation?.rule).toContain('self-modification blocked in delivery mode');
+  });
+
+  it('allows Ralph self-modification in delivery mode with explicit approval', () => {
+    const policy = makePolicy({
+      files: {
+        allowRead: ['.'],
+        allowWrite: ['.'],
+        denyRead: ['.env', '.git/objects'],
+        denyWrite: ['.git', 'node_modules', 'dist'],
+      },
+    });
+    const result = checkFileWrite(policy, 'runtime/loop.ts', workDir, { selfModificationApproved: true });
+    expect(result.allowed).toBe(true);
+  });
+
+  it('does not block Ralph self-modification paths in core mode', () => {
+    const policy = makeCorePolicy({
+      files: {
+        allowRead: ['.'],
+        allowWrite: ['.'],
+        denyRead: ['.env', '.git/objects'],
+        denyWrite: ['.git', 'node_modules', 'dist'],
+      },
+    });
+    const result = checkFileWrite(policy, 'runtime/loop.ts', workDir);
+    expect(result.allowed).toBe(true);
+  });
 });
 
 // =============================================================================

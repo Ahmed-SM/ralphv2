@@ -930,7 +930,7 @@ Mode separation requirements:
 - [x] Add `mode: "core" | "delivery"` to `ralph.config.json` — mode is in `ralph.policy.json` (per Phase 43 design), loaded at loop startup.
 - [x] Enforce policy profile by mode (command/file allowlists + approval gates) — Phase 43.5: executor enforces policy on every readFile/writeFile/bash call.
 - [x] Separate state by mode/repo (`state/core/*`, `state/delivery/<repo>/*`) → implemented via [runtime/state-paths.ts](./runtime/state-paths.ts) and loop wiring in [runtime/loop.ts](./runtime/loop.ts) with legacy fallback.
-- [ ] Block Ralph self-modification while in `delivery` mode unless explicitly approved.
+- [x] Block Ralph self-modification while in `delivery` mode unless explicitly approved. → enforced in [runtime/policy.ts](./runtime/policy.ts) (`checkFileWrite` self-mod guard) with opt-in override via `RALPH_APPROVE_SELF_MODIFY=true`; wired through [runtime/executor.ts](./runtime/executor.ts) and covered by [runtime/policy.test.ts](./runtime/policy.test.ts) and [runtime/policy-enforcement.test.ts](./runtime/policy-enforcement.test.ts).
 - [ ] Report KPIs per mode (platform health vs delivery performance).
 
 #### New Project Runbook (v1)

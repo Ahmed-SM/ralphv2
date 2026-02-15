@@ -180,6 +180,7 @@ export function checkFileWrite(
   policy: RalphPolicy,
   filePath: string,
   workDir: string,
+  options?: { selfModificationApproved?: boolean },
 ): PolicyCheckResult {
   const relPath = toRelativePath(filePath, workDir);
 
@@ -191,6 +192,18 @@ export function checkFileWrite(
         violation: makeViolation('file_write_denied', filePath, `denyWrite: ${denied}`),
       };
     }
+  }
+
+  // In delivery mode, block Ralph self-modification unless explicitly approved.
+  if (policy.mode === 'delivery' && isRalphSelfModificationPath(relPath) && !options?.selfModificationApproved) {
+    return {
+      allowed: false,
+      violation: makeViolation(
+        'file_write_denied',
+        filePath,
+        'self-modification blocked in delivery mode (set RALPH_APPROVE_SELF_MODIFY=true to override)',
+      ),
+    };
   }
 
   // Check allow list
@@ -542,4 +555,24 @@ function makeViolation(
     rule,
     timestamp: new Date().toISOString(),
   };
+}
+
+const RALPH_SELF_MOD_PATHS = [
+  'AGENTS.md',
+  'implementation-plan.md',
+  'ralph.config.json',
+  'ralph.policy.json',
+  'agents',
+  'runtime',
+  'skills',
+  'types',
+  'integrations',
+  'templates',
+  'specs',
+  'cli.ts',
+];
+
+function isRalphSelfModificationPath(relPath: string): boolean {
+  const normalized = relPath.replace(/\\/g, '/');
+  return RALPH_SELF_MOD_PATHS.some((pattern) => pathMatches(normalized, pattern));
 }

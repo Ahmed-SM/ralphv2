@@ -254,6 +254,10 @@ describe('Executor policy enforcement', () => {
   // ===========================================================================
 
   describe('writeFile — file write policy', () => {
+    beforeEach(() => {
+      vi.unstubAllEnvs();
+    });
+
     it('blocks writes to denied paths', async () => {
       const executor = makeMockExecutor(makePolicy());
       await expect(executor.writeFile('node_modules/foo.js', 'data')).rejects.toThrow('Policy violation');
@@ -273,6 +277,31 @@ describe('Executor policy enforcement', () => {
     it('blocks writes to non-allowlisted paths in delivery mode', async () => {
       const executor = makeMockExecutor(makePolicy());
       await expect(executor.writeFile('config/app.yaml', 'data')).rejects.toThrow('Policy violation');
+    });
+
+    it('blocks Ralph self-modification writes in delivery mode without explicit approval', async () => {
+      const executor = makeMockExecutor(makePolicy({
+        files: {
+          allowRead: ['.'],
+          allowWrite: ['.'],
+          denyRead: ['.env', '.git/objects'],
+          denyWrite: ['.git', 'node_modules', 'dist'],
+        },
+      }));
+      await expect(executor.writeFile('runtime/loop.ts', 'data')).rejects.toThrow('self-modification blocked');
+    });
+
+    it('allows Ralph self-modification writes in delivery mode with explicit approval', async () => {
+      vi.stubEnv('RALPH_APPROVE_SELF_MODIFY', 'true');
+      const executor = makeMockExecutor(makePolicy({
+        files: {
+          allowRead: ['.'],
+          allowWrite: ['.'],
+          denyRead: ['.env', '.git/objects'],
+          denyWrite: ['.git', 'node_modules', 'dist'],
+        },
+      }));
+      await expect(executor.writeFile('runtime/loop.ts', 'data')).resolves.toBeUndefined();
     });
 
     it('allows writes to non-allowlisted paths in core mode', async () => {

@@ -129,7 +129,9 @@ export class Executor implements SandboxInterface {
    */
   async writeFile(filePath: string, content: string): Promise<void> {
     if (this._policy) {
-      const check = checkFileWrite(this._policy, filePath, this.options.workDir);
+      const check = checkFileWrite(this._policy, filePath, this.options.workDir, {
+        selfModificationApproved: process.env.RALPH_APPROVE_SELF_MODIFY === 'true',
+      });
       if (!check.allowed) {
         this._violations.push(check.violation!);
         throw new Error(`Policy violation: file write denied — ${check.violation!.rule}`);
