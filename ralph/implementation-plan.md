@@ -990,10 +990,13 @@ Bootstrap assets:
     - `specs/delivery-workflow.md`
     - `specs/quality-gates.md`
   - Generate task graph in `implementation-plan.md` with explicit phase/task citations. ✅
-- [ ] **Human-on-the-loop planning review and approval:**
+- [x] **Human-on-the-loop planning review and approval:** ✅ COMPLETE
   - Reuse review lifecycle: draft → pending_review → approved | rejected → applied
-  - Add review command(s) for generated plans/specs before execution starts
-  - Persist reviewer decisions and rationale in `state/learning.jsonl`.
+  - Added plan-review CLI mode via `--plan` on existing commands:
+    - `ralph review --plan` (shows latest plan review status and context)
+    - `ralph approve --plan` (transitions `pending_review -> approved`)
+    - `ralph reject --plan [--reason=<text>]` (transitions `pending_review -> rejected`)
+  - Persist reviewer decisions and rationale in `state/learning.jsonl` via appended `plan_review` events.
 - [x] **Enforce delivery-mode execution gate on plan approval:** ✅ COMPLETE
   - Added runtime gate in `runLoop()` to block execution in `delivery` mode unless latest `plan_review` status is `approved` or `applied`.
   - Added `checkPlanningApproval()` in [runtime/loop.ts](./runtime/loop.ts) and exported via [runtime/index.ts](./runtime/index.ts).

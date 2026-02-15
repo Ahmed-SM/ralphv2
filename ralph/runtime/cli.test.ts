@@ -138,6 +138,12 @@ describe('parseArgs', () => {
     expect(result.repoPath).toBe('../target-repo');
   });
 
+  it('parses --plan flag', () => {
+    const result = parseArgs(['review', '--plan']);
+    expect(result.command).toBe('review');
+    expect(result.plan).toBe(true);
+  });
+
   it('parses multiple flags together', () => {
     const result = parseArgs(['discover', '--dry-run', '--config=my.json', '--task=RALPH-042']);
     expect(result.command).toBe('discover');
@@ -2032,6 +2038,34 @@ describe('runReview', () => {
     const code = await dispatch(['review'], deps);
     expect(code).toBe(0);
   });
+
+  it('shows latest plan review status in --plan mode', async () => {
+    const planLine = JSON.stringify({
+      type: 'plan_review',
+      status: 'pending_review',
+      phase: 'bootstrap',
+      planPath: './implementation-plan.md',
+      specPaths: ['./specs/system-context.md'],
+      rationale: 'Awaiting approval',
+      timestamp: '2026-02-15T00:00:00.000Z',
+    });
+
+    const deps = makeDeps({
+      readFile: vi.fn().mockImplementation(async (path: string) => {
+        if (path.endsWith('state/learning.jsonl')) return planLine + '\n';
+        return '';
+      }),
+    });
+    const args: ParsedArgs = { command: 'review', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, plan: true };
+
+    const code = await runReview(args, deps);
+
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Plan review status');
+    expect(logged).toContain('Current status: pending_review');
+    expect(logged).toContain('To approve: ralph approve --plan');
+  });
 });
 
 // =============================================================================
@@ -2212,6 +2246,34 @@ describe('runApprove', () => {
     const code = await dispatch(['approve', 'IMPROVE-001'], deps);
     expect(code).toBe(0);
   });
+
+  it('approves pending plan review in --plan mode', async () => {
+    const deps = makeDeps({
+      readFile: vi.fn().mockImplementation(async (path: string) => {
+        if (path.endsWith('state/learning.jsonl')) {
+          return JSON.stringify({
+            type: 'plan_review',
+            status: 'pending_review',
+            phase: 'bootstrap',
+            planPath: './implementation-plan.md',
+            specPaths: ['./specs/system-context.md'],
+            timestamp: '2026-02-15T00:00:00.000Z',
+          }) + '\n';
+        }
+        return '';
+      }),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const args: ParsedArgs = { command: 'approve', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined, plan: true };
+    const code = await runApprove(args, deps);
+
+    expect(code).toBe(0);
+    expect(deps.writeFile).toHaveBeenCalledTimes(1);
+    const written = (deps.writeFile as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(written).toContain('"type":"plan_review"');
+    expect(written).toContain('"status":"approved"');
+  });
 });
 
 // =============================================================================
@@ -2335,5 +2397,40 @@ describe('runReject', () => {
     expect(code).toBe(0);
     const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
     expect(logged).toContain('Too risky');
+  });
+
+  it('rejects pending plan review with reason in --plan mode', async () => {
+    const deps = makeDeps({
+      readFile: vi.fn().mockImplementation(async (path: string) => {
+        if (path.endsWith('state/learning.jsonl')) {
+          return JSON.stringify({
+            type: 'plan_review',
+            status: 'pending_review',
+            phase: 'bootstrap',
+            planPath: './implementation-plan.md',
+            timestamp: '2026-02-15T00:00:00.000Z',
+          }) + '\n';
+        }
+        return '';
+      }),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const args: ParsedArgs = {
+      command: 'reject',
+      configPath: DEFAULT_CONFIG_PATH,
+      dryRun: false,
+      taskFilter: undefined,
+      plan: true,
+      reason: 'Missing acceptance criteria',
+    };
+
+    const code = await runReject(args, deps);
+
+    expect(code).toBe(0);
+    expect(deps.writeFile).toHaveBeenCalledTimes(1);
+    const written = (deps.writeFile as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(written).toContain('"status":"rejected"');
+    expect(written).toContain('"reason":"Missing acceptance criteria"');
   });
 });

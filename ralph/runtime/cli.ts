@@ -21,6 +21,8 @@ export interface ParsedArgs {
   dryRun: boolean;
   taskFilter: string | undefined;
   repoPath?: string;
+  /** Plan review mode for review/approve/reject commands */
+  plan?: boolean;
   /** Positional argument (e.g. proposal ID for approve/reject) */
   positional?: string;
   /** Reason flag (e.g. --reason=<text> for reject) */
@@ -73,6 +75,7 @@ Options:
   --dry-run         Don't make changes, just show what would happen
   --task=<id>       Process only the specified task
   --repo=<path>     Target repository path for bootstrap (default: cwd)
+  --plan            Use planning review workflow (for review/approve/reject)
 
 Examples:
   ralph                    # Run full loop
@@ -87,6 +90,9 @@ Examples:
   ralph review             # List pending proposals
   ralph approve IMPROVE-001  # Approve and apply a proposal
   ralph reject IMPROVE-001   # Reject a proposal
+  ralph review --plan      # Show current plan review status
+  ralph approve --plan     # Approve pending plan review
+  ralph reject --plan --reason=Missing scope  # Reject pending plan review
 `;
 
 export const BANNER = [
@@ -110,6 +116,7 @@ const VALID_COMMANDS = new Set<CliCommand>(['run', 'discover', 'sync', 'status',
 export function parseArgs(argv: string[]): ParsedArgs {
   const command = resolveCommand(argv[0]);
   const dryRun = argv.includes('--dry-run');
+  const plan = argv.includes('--plan');
 
   const configArg = argv.find(a => a.startsWith('--config='));
   const configPath = configArg?.split('=')[1] || DEFAULT_CONFIG_PATH;
@@ -126,7 +133,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   // Positional argument: first non-flag arg after the command
   const positional = argv.slice(1).find(a => !a.startsWith('--'));
 
-  return { command, configPath, dryRun, taskFilter, repoPath, positional, reason };
+  return { command, configPath, dryRun, taskFilter, repoPath, plan, positional, reason };
 }
 
 /**
@@ -707,6 +714,10 @@ async function loadTasksForLearning(
  * Show all pending improvement proposals with full details.
  */
 export async function runReview(args: ParsedArgs, deps: CliDeps): Promise<number> {
+  if (args.plan) {
+    return runPlanReview(args, deps);
+  }
+
   deps.log('Pending improvement proposals:\n');
 
   const workDir = resolve(deps.cwd);
@@ -751,6 +762,139 @@ export async function runReview(args: ParsedArgs, deps: CliDeps): Promise<number
   return 0;
 }
 
+interface PlanReviewEvent {
+  type: 'plan_review';
+  status: string;
+  phase?: string;
+  planPath?: string;
+  specPaths?: string[];
+  rationale?: string;
+  reason?: string;
+  timestamp?: string;
+}
+
+async function loadPlanReviewEvents(
+  deps: CliDeps,
+  workDir: string,
+): Promise<{ learningPath: string; content: string; events: PlanReviewEvent[] }> {
+  const learningPath = resolve(workDir, 'state/learning.jsonl');
+
+  let content = '';
+  try {
+    content = await deps.readFile(learningPath, 'utf-8');
+  } catch {
+    content = '';
+  }
+
+  const events: PlanReviewEvent[] = [];
+  for (const line of content.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as Record<string, unknown>;
+      if (parsed.type === 'plan_review' && typeof parsed.status === 'string') {
+        events.push(parsed as PlanReviewEvent);
+      }
+    } catch {
+      // Ignore malformed lines for resilience.
+    }
+  }
+
+  return { learningPath, content, events };
+}
+
+function formatPlanReviewDetails(event: PlanReviewEvent): string[] {
+  const lines: string[] = [];
+  if (event.phase) lines.push(`  Phase:     ${event.phase}`);
+  if (event.planPath) lines.push(`  Plan:      ${event.planPath}`);
+  if (event.specPaths && event.specPaths.length > 0) {
+    lines.push(`  Specs:     ${event.specPaths.join(', ')}`);
+  }
+  if (event.rationale) lines.push(`  Rationale: ${event.rationale}`);
+  if (event.reason) lines.push(`  Reason:    ${event.reason}`);
+  if (event.timestamp) lines.push(`  Updated:   ${event.timestamp}`);
+  return lines;
+}
+
+async function runPlanReview(_args: ParsedArgs, deps: CliDeps): Promise<number> {
+  deps.log('Plan review status:\n');
+
+  const workDir = resolve(deps.cwd);
+  const { events } = await loadPlanReviewEvents(deps, workDir);
+  const latest = events[events.length - 1];
+
+  if (!latest) {
+    deps.log('No plan_review events found in state/learning.jsonl.');
+    deps.log('Run "ralph bootstrap" (or append a draft/pending_review event) to start planning review.');
+    return 0;
+  }
+
+  deps.log(`  Current status: ${latest.status}`);
+  for (const line of formatPlanReviewDetails(latest)) {
+    deps.log(line);
+  }
+  deps.log('');
+
+  if (latest.status === 'pending_review') {
+    deps.log('To approve: ralph approve --plan');
+    deps.log('To reject:  ralph reject --plan [--reason=<text>]');
+  } else {
+    deps.log('No pending plan review decision.');
+  }
+
+  return 0;
+}
+
+async function runPlanDecision(args: ParsedArgs, deps: CliDeps, nextStatus: 'approved' | 'rejected'): Promise<number> {
+  const actionWord = nextStatus === 'approved' ? 'Approving' : 'Rejecting';
+  deps.log(`${actionWord} plan review...\n`);
+
+  const workDir = resolve(deps.cwd);
+  const { learningPath, content, events } = await loadPlanReviewEvents(deps, workDir);
+  const latest = events[events.length - 1];
+
+  if (!latest) {
+    deps.error('No plan_review event found.');
+    deps.error('Run "ralph bootstrap" to generate baseline plan artifacts first.');
+    return 1;
+  }
+
+  if (latest.status !== 'pending_review') {
+    deps.error(`Plan review status is "${latest.status}" — only pending_review can transition to "${nextStatus}".`);
+    return 1;
+  }
+
+  if (args.dryRun) {
+    deps.log(`  [DRY RUN] Would set plan review status: pending_review → ${nextStatus}`);
+    return 0;
+  }
+
+  if (!deps.writeFile) {
+    deps.error('Plan review update requires write access (CliDeps.writeFile is undefined).');
+    return 1;
+  }
+
+  const now = new Date().toISOString();
+  const event: PlanReviewEvent = {
+    type: 'plan_review',
+    status: nextStatus,
+    phase: latest.phase,
+    planPath: latest.planPath,
+    specPaths: latest.specPaths,
+    rationale: latest.rationale,
+    reason: nextStatus === 'rejected' ? args.reason : undefined,
+    timestamp: now,
+  };
+
+  await deps.writeFile(learningPath, content + JSON.stringify(event) + '\n');
+
+  deps.log(`  Status: pending_review → ${nextStatus}`);
+  if (event.reason) {
+    deps.log(`  Reason: ${event.reason}`);
+  }
+  deps.log(`\nPlan review ${nextStatus}.`);
+  return 0;
+}
+
 /**
  * Approve and apply a pending improvement proposal.
  *
@@ -762,6 +906,10 @@ export async function runReview(args: ParsedArgs, deps: CliDeps): Promise<number
  *   5. Set status to 'applied', log improvement_applied event
  */
 export async function runApprove(args: ParsedArgs, deps: CliDeps): Promise<number> {
+  if (args.plan) {
+    return runPlanDecision(args, deps, 'approved');
+  }
+
   const proposalId = args.positional;
   if (!proposalId) {
     deps.error('Usage: ralph approve <proposal-id>');
@@ -877,6 +1025,10 @@ export async function runApprove(args: ParsedArgs, deps: CliDeps): Promise<numbe
  * Reject a pending improvement proposal with an optional reason.
  */
 export async function runReject(args: ParsedArgs, deps: CliDeps): Promise<number> {
+  if (args.plan) {
+    return runPlanDecision(args, deps, 'rejected');
+  }
+
   const proposalId = args.positional;
   if (!proposalId) {
     deps.error('Usage: ralph reject <proposal-id> [--reason=<text>]');
