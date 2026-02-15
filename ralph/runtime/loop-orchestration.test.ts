@@ -13,6 +13,7 @@ import {
   estimateCost,
   computeRunKpis,
   validateInductionInvariant,
+  checkPlanningApproval,
   readJsonl,
   appendJsonl,
   type LoopContext,
@@ -2565,6 +2566,58 @@ describe('onFailure=retry', () => {
   it('LoopConfig maxRetries is optional', () => {
     const config = makeConfig();
     expect(config.loop.maxRetries).toBeUndefined();
+  });
+});
+
+describe('checkPlanningApproval', () => {
+  it('allows execution in core mode without review events', async () => {
+    const context = makeContext({
+      executor: makeMockExecutor({ './state/learning.jsonl': '' }),
+    });
+
+    const result = await checkPlanningApproval(context, 'core');
+    expect(result.allowed).toBe(true);
+  });
+
+  it('blocks delivery mode when no plan_review event exists', async () => {
+    const context = makeContext({
+      executor: makeMockExecutor({ './state/learning.jsonl': '' }),
+    });
+
+    const result = await checkPlanningApproval(context, 'delivery');
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('no plan_review event found');
+  });
+
+  it('blocks delivery mode when latest status is pending_review', async () => {
+    const context = makeContext({
+      executor: makeMockExecutor({
+        './state/learning.jsonl': JSON.stringify({
+          type: 'plan_review',
+          status: 'pending_review',
+          timestamp: '2026-01-01T00:00:00Z',
+        }) + '\n',
+      }),
+    });
+
+    const result = await checkPlanningApproval(context, 'delivery');
+    expect(result.allowed).toBe(false);
+    expect(result.status).toBe('pending_review');
+  });
+
+  it('allows delivery mode when latest status is approved', async () => {
+    const context = makeContext({
+      executor: makeMockExecutor({
+        './state/learning.jsonl': [
+          JSON.stringify({ type: 'plan_review', status: 'pending_review', timestamp: '2026-01-01T00:00:00Z' }),
+          JSON.stringify({ type: 'plan_review', status: 'approved', timestamp: '2026-01-02T00:00:00Z' }),
+        ].join('\n') + '\n',
+      }),
+    });
+
+    const result = await checkPlanningApproval(context, 'delivery');
+    expect(result.allowed).toBe(true);
+    expect(result.status).toBe('approved');
   });
 });
 

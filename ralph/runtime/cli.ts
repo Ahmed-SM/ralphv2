@@ -558,13 +558,16 @@ export async function runBootstrap(args: ParsedArgs, deps: CliDeps): Promise<num
 
   if (!args.dryRun) {
     const specsDir = resolve(repoRoot, 'specs');
+    const stateDir = resolve(repoRoot, 'state');
     if (deps.mkdir) {
       await deps.mkdir(specsDir, { recursive: true });
+      await deps.mkdir(stateDir, { recursive: true });
     } else {
       const fsPromises = await deps.importModule('node:fs/promises') as {
         mkdir: (path: string, opts: { recursive: boolean }) => Promise<void>;
       };
       await fsPromises.mkdir(specsDir, { recursive: true });
+      await fsPromises.mkdir(stateDir, { recursive: true });
     }
   }
 
@@ -597,6 +600,52 @@ export async function runBootstrap(args: ParsedArgs, deps: CliDeps): Promise<num
     await deps.writeFile!(absPath, content);
     created++;
     deps.log(`  [created] ${relPath}`);
+  }
+
+  if (!args.dryRun && created > 0) {
+    const learningPath = resolve(repoRoot, 'state/learning.jsonl');
+    let learningContent = '';
+    try {
+      learningContent = await deps.readFile(learningPath, 'utf-8');
+    } catch {
+      learningContent = '';
+    }
+
+    let latestStatus: string | undefined;
+    if (learningContent.trim()) {
+      const lines = learningContent.split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        try {
+          const parsed = JSON.parse(line) as { type?: string; status?: string };
+          if (parsed.type === 'plan_review' && typeof parsed.status === 'string') {
+            latestStatus = parsed.status;
+          }
+        } catch {
+          // Ignore malformed lines for bootstrap event detection.
+        }
+      }
+    }
+
+    if (latestStatus !== 'pending_review') {
+      const planReviewEvent = {
+        type: 'plan_review',
+        status: 'pending_review',
+        phase: 'bootstrap',
+        planPath: './implementation-plan.md',
+        specPaths: [
+          './specs/system-context.md',
+          './specs/architecture.md',
+          './specs/delivery-workflow.md',
+          './specs/quality-gates.md',
+        ],
+        rationale: 'Bootstrap generated/updated baseline planning artifacts; human approval is required before delivery-mode execution.',
+        timestamp: new Date().toISOString(),
+      };
+      await deps.writeFile!(learningPath, learningContent + JSON.stringify(planReviewEvent) + '\n');
+      deps.log('  [pending_review] state/learning.jsonl (plan_review event appended)');
+    } else {
+      deps.log('  [skip] state/learning.jsonl (plan_review already pending_review)');
+    }
   }
 
   deps.log('');

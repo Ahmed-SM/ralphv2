@@ -9,7 +9,7 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { dispatch } from './cli.js';
 
 // Export modules for programmatic use
-export { runLoop, type LoopContext, type LoopResult, type RunKpiInput, type RunKpis, type InductionInvariantReport, pickNextTask, executeTaskLoop, executeIteration, updateTaskStatus, recordTaskCompletion, runLearningAnalysis, autoApplyImprovements, runGitWatcher, syncTaskToTracker, pullFromTracker, getTrackerAuth, estimateCost, computeRunKpis, validateInductionInvariant, invokeHook, validateAndAppendTaskOp, readJsonl, appendJsonl, runPolicyChecksBeforeCommit } from './loop.js';
+export { runLoop, type LoopContext, type LoopResult, type RunKpiInput, type RunKpis, type InductionInvariantReport, type PlanApprovalCheckResult, pickNextTask, executeTaskLoop, executeIteration, updateTaskStatus, recordTaskCompletion, runLearningAnalysis, autoApplyImprovements, runGitWatcher, syncTaskToTracker, pullFromTracker, getTrackerAuth, estimateCost, computeRunKpis, validateInductionInvariant, checkPlanningApproval, invokeHook, validateAndAppendTaskOp, readJsonl, appendJsonl, runPolicyChecksBeforeCommit } from './loop.js';
 export { createExecutor, Executor, GitOperations } from './executor.js';
 export { createSandbox, Sandbox, printSandboxStatus, type FileChange } from './sandbox.js';
 export { executeLLMIteration, executeToolCall, buildSystemPrompt, buildIterationPrompt, interpretResponse, loadTaskContext, createLLMProvider, createDefaultLLMProvider, AGENT_TOOLS } from './llm.js';

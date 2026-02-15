@@ -994,6 +994,12 @@ Bootstrap assets:
   - Reuse review lifecycle: draft → pending_review → approved | rejected → applied
   - Add review command(s) for generated plans/specs before execution starts
   - Persist reviewer decisions and rationale in `state/learning.jsonl`.
+- [x] **Enforce delivery-mode execution gate on plan approval:** ✅ COMPLETE
+  - Added runtime gate in `runLoop()` to block execution in `delivery` mode unless latest `plan_review` status is `approved` or `applied`.
+  - Added `checkPlanningApproval()` in [runtime/loop.ts](./runtime/loop.ts) and exported via [runtime/index.ts](./runtime/index.ts).
+  - Gate logs an `execution_blocked` progress event with reason/status when approval is missing.
+  - Updated `ralph bootstrap` in [runtime/cli.ts](./runtime/cli.ts) to append a `plan_review` event with `status: pending_review` to `state/learning.jsonl` when new baseline artifacts are generated.
+  - Added unit tests for approval gating in [runtime/loop-orchestration.test.ts](./runtime/loop-orchestration.test.ts) and bootstrap event creation/deduping in [runtime/cli.test.ts](./runtime/cli.test.ts).
 - [ ] **Knowledge tailoring + maintenance loop (per target system):**
   - Detect drift between codebase reality and generated specs/plans
   - Propose incremental updates to `specs/*.md` and `implementation-plan.md`
@@ -1116,7 +1122,7 @@ Phase 44 planned: 🟡
 
 - [x] Induction invariant encoded as enforceable runtime contract
 - [x] Bootstrap generation of `specs/*.md` and `implementation-plan.md` for external repos
-- [ ] Human review required for generated plans before execution
+- [x] Human review required for generated plans before execution
 - [ ] Drift-aware spec/plan tailoring loop with append-only rationale
 - [ ] External pilot proof across 3 heterogeneous repositories
 

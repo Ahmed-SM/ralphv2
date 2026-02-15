@@ -1376,8 +1376,13 @@ describe('runBootstrap', () => {
 
     const code = await runBootstrap(args, deps);
     expect(code).toBe(0);
-    expect(mkdir).toHaveBeenCalledTimes(1);
-    expect(writeFile).toHaveBeenCalledTimes(5);
+    expect(mkdir).toHaveBeenCalledTimes(2);
+    expect(writeFile).toHaveBeenCalledTimes(6);
+    const learningWrite = writeFile.mock.calls.find(c => String(c[0]).endsWith('/state/learning.jsonl'));
+    expect(learningWrite).toBeDefined();
+    const event = JSON.parse(String(learningWrite![1]).trim());
+    expect(event.type).toBe('plan_review');
+    expect(event.status).toBe('pending_review');
   });
 
   it('skips files that already exist', async () => {
@@ -1394,9 +1399,33 @@ describe('runBootstrap', () => {
 
     const code = await runBootstrap(args, deps);
     expect(code).toBe(0);
-    expect(writeFile).toHaveBeenCalledTimes(4);
+    expect(writeFile).toHaveBeenCalledTimes(5);
     const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
     expect(logged).toContain('[skip] specs/system-context.md');
+  });
+
+  it('does not append pending_review when latest plan_review is already pending_review', async () => {
+    const writeFile = vi.fn().mockResolvedValue(undefined);
+    const mkdir = vi.fn().mockResolvedValue(undefined);
+    const readFile = vi.fn().mockImplementation(async (path: string) => {
+      if (path.endsWith('/package.json')) return JSON.stringify({ name: 'target-repo' });
+      if (path.endsWith('/state/learning.jsonl')) {
+        return JSON.stringify({
+          type: 'plan_review',
+          status: 'pending_review',
+          timestamp: '2026-02-15T00:00:00Z',
+        }) + '\n';
+      }
+      throw new Error('ENOENT');
+    });
+
+    const deps = makeDeps({ readFile, writeFile, mkdir });
+    const args: ParsedArgs = { command: 'bootstrap', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runBootstrap(args, deps);
+    expect(code).toBe(0);
+    const learningWrites = writeFile.mock.calls.filter(c => String(c[0]).endsWith('/state/learning.jsonl'));
+    expect(learningWrites).toHaveLength(0);
   });
 });
 

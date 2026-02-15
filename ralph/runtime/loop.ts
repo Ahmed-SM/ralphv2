@@ -97,6 +97,19 @@ export interface InductionInvariantReport {
   kpis: RunKpis;
 }
 
+type PlanReviewStatus = 'draft' | 'pending_review' | 'approved' | 'rejected' | 'applied';
+
+interface PlanReviewEventLike {
+  type: string;
+  status?: string;
+}
+
+export interface PlanApprovalCheckResult {
+  allowed: boolean;
+  status?: PlanReviewStatus;
+  reason?: string;
+}
+
 // =============================================================================
 // COST TRACKING
 // =============================================================================
@@ -226,6 +239,48 @@ export function validateInductionInvariant(
     violations,
     mode,
     kpis,
+  };
+}
+
+/**
+ * Delivery-mode guard: execution is blocked until the generated plan/spec set
+ * has a human-reviewed plan status of approved or applied.
+ */
+export async function checkPlanningApproval(
+  context: LoopContext,
+  mode: RalphPolicy['mode'],
+): Promise<PlanApprovalCheckResult> {
+  if (mode !== 'delivery') {
+    return { allowed: true };
+  }
+
+  const statePaths = getStatePaths(context);
+  const learningEvents = await readJsonl<PlanReviewEventLike>(
+    context.executor,
+    statePaths.learning,
+  );
+
+  const planReviewEvents = learningEvents.filter(
+    e => e && e.type === 'plan_review' && typeof e.status === 'string',
+  );
+  const latest = planReviewEvents[planReviewEvents.length - 1];
+  const status = latest?.status as PlanReviewStatus | undefined;
+
+  if (status === 'approved' || status === 'applied') {
+    return { allowed: true, status };
+  }
+
+  if (!status) {
+    return {
+      allowed: false,
+      reason: 'delivery mode requires plan approval; no plan_review event found',
+    };
+  }
+
+  return {
+    allowed: false,
+    status,
+    reason: `delivery mode requires plan approval; current plan_review status is "${status}"`,
   };
 }
 
@@ -403,6 +458,20 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
   console.log(`State base: ${statePaths.baseDir}${statePaths.scoped ? ' (scoped)' : ' (legacy)'}`);
   if (taskFilter) {
     console.log(`Task filter: ${taskFilter}`);
+  }
+
+  const planApproval = await checkPlanningApproval(context, mode);
+  if (!planApproval.allowed) {
+    console.log(`Execution blocked: ${planApproval.reason}`);
+    await appendJsonl(executor, statePaths.progress, {
+      type: 'execution_blocked',
+      reason: planApproval.reason,
+      status: planApproval.status,
+      mode,
+      timestamp: new Date().toISOString(),
+    } as ProgressEvent);
+    result.duration = Date.now() - startTime;
+    return result;
   }
 
   // Main loop
