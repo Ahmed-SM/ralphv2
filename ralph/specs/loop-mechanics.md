@@ -13,32 +13,32 @@ Ralph operates in a **single-task loop**: pick one task, iterate until complete,
 │                     RALPH LOOP                          │
 │                                                         │
 │  ┌─────────────┐                                        │
-│  │ Read Index  │ ← AGENTS.md, implementation-plan.md   │
+│  │ Read Index  │ ← AGENTS.md, implementation-plan.md    │
 │  └──────┬──────┘                                        │
 │         ↓                                               │
 │  ┌─────────────┐                                        │
-│  │ Pick Task   │ ← One task from tasks.jsonl           │
+│  │ Pick Task   │ ← One task from tasks.jsonl            │
 │  └──────┬──────┘                                        │
 │         ↓                                               │
-│  ┌─────────────────────────────────────────────┐       │
+│  ┌─────────────────────────────────────────────┐        │
 │  │              TASK LOOP                       │       │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────────┐  │       │
-│  │  │ Execute │→ │ Observe │→ │ Complete?   │  │       │
-│  │  └─────────┘  └─────────┘  └──────┬──────┘  │       │
-│  │       ↑                       no  │  yes    │       │
-│  │       └───────────────────────────┘   │     │       │
-│  └───────────────────────────────────────┼─────┘       │
+│  │  ┌─────────┐  ┌─────────┐  ┌─────────────┐  │        │
+│  │  │ Execute │→ │ Observe │→ │ Complete?   │  │        │
+│  │  └─────────┘  └─────────┘  └──────┬──────┘  │        │
+│  │       ↑                       no  │  yes    │        │
+│  │       └───────────────────────────┘   │     │        │
+│  └───────────────────────────────────────┼─────┘        │
 │         ↓                                │              │
-│  ┌─────────────┐                        ↓              │
-│  │ Commit      │ ← Git commit with task ID            │
+│  ┌─────────────┐                        ↓               │
+│  │ Commit      │ ← Git commit with task ID              │
 │  └──────┬──────┘                                        │
 │         ↓                                               │
 │  ┌─────────────┐                                        │
-│  │ Sync        │ ← Update tracker                      │
+│  │ Sync        │ ← Update tracker                       │
 │  └──────┬──────┘                                        │
 │         ↓                                               │
 │  ┌─────────────┐                                        │
-│  │ Learn       │ ← Record to learning.jsonl            │
+│  │ Learn       │ ← Record to learning.jsonl             │
 │  └──────┬──────┘                                        │
 │         ↓                                               │
 │      (next task)                                        │
@@ -86,12 +86,12 @@ interface Sandbox {
 ```typescript
 function pickTask(tasks: Task[]): Task | null {
   const candidates = tasks
-    .filter(t => t.status === 'pending' || t.status === 'in_progress')
-    .filter(t => !isBlocked(t))
+    .filter((t) => t.status === "pending" || t.status === "in_progress")
+    .filter((t) => !isBlocked(t))
     .sort((a, b) => {
       // In-progress first
-      if (a.status === 'in_progress') return -1;
-      if (b.status === 'in_progress') return 1;
+      if (a.status === "in_progress") return -1;
+      if (b.status === "in_progress") return 1;
       // Then by priority (if exists)
       if (a.priority !== b.priority) return b.priority - a.priority;
       // Then by creation time
@@ -127,22 +127,22 @@ interface Iteration {
 
 Ralph can take these actions:
 
-| Action | Description |
-|--------|-------------|
-| `read` | Read file content |
-| `write` | Write/modify file |
-| `bash` | Execute shell command |
-| `git` | Git operation |
-| `eval` | Run TypeScript |
+| Action  | Description           |
+| ------- | --------------------- |
+| `read`  | Read file content     |
+| `write` | Write/modify file     |
+| `bash`  | Execute shell command |
+| `git`   | Git operation         |
+| `eval`  | Run TypeScript        |
 
 ### Iteration Result
 
 ```typescript
 type IterationResult =
-  | { status: 'continue'; reason: string }
-  | { status: 'complete'; artifacts: string[] }
-  | { status: 'blocked'; blocker: string }
-  | { status: 'failed'; error: string }
+  | { status: "continue"; reason: string }
+  | { status: "complete"; artifacts: string[] }
+  | { status: "blocked"; blocker: string }
+  | { status: "failed"; error: string };
 ```
 
 ## Completion Detection
@@ -152,13 +152,15 @@ A task is complete when:
 ### 1. Explicit Completion
 
 Agent declares done:
+
 ```typescript
-return { status: 'complete', artifacts: ['path/to/output.ts'] };
+return { status: "complete", artifacts: ["path/to/output.ts"] };
 ```
 
 ### 2. Test Passing
 
 If task has associated tests:
+
 ```bash
 npm test -- --grep "RALPH-001"
 # Exit 0 = complete
@@ -167,6 +169,7 @@ npm test -- --grep "RALPH-001"
 ### 3. Artifact Exists
 
 If task specifies expected output:
+
 ```json
 {
   "completion": {
@@ -179,6 +182,7 @@ If task specifies expected output:
 ### 4. Validation Function
 
 Custom validation:
+
 ```typescript
 {
   "completion": {
@@ -192,19 +196,19 @@ Custom validation:
 
 ### Per-Task Limits
 
-| Limit | Default | Configurable |
-|-------|---------|--------------|
-| Max iterations | 10 | Yes |
-| Max time | 30 min | Yes |
-| Max cost | $5 | Yes |
+| Limit          | Default | Configurable |
+| -------------- | ------- | ------------ |
+| Max iterations | 10      | Yes          |
+| Max time       | 30 min  | Yes          |
+| Max cost       | $5      | Yes          |
 
 ### Global Limits
 
-| Limit | Default | Configurable |
-|-------|---------|--------------|
-| Max tasks per run | 50 | Yes |
-| Max total time | 4 hours | Yes |
-| Max total cost | $50 | Yes |
+| Limit             | Default | Configurable |
+| ----------------- | ------- | ------------ |
+| Max tasks per run | 50      | Yes          |
+| Max total time    | 4 hours | Yes          |
+| Max total cost    | $50     | Yes          |
 
 ### On Limit Reached
 
@@ -218,6 +222,7 @@ Custom validation:
 ### Between Iterations
 
 State persists in filesystem:
+
 - Work in progress files
 - Temporary artifacts
 - Execution logs
@@ -225,6 +230,7 @@ State persists in filesystem:
 ### Between Tasks
 
 State commits to git:
+
 - Completed artifacts
 - Updated tasks.jsonl
 - Learning data
@@ -232,6 +238,7 @@ State commits to git:
 ### Between Runs
 
 Full state in git:
+
 - All of the above
 - Can resume from any commit
 
@@ -258,6 +265,7 @@ One task at a time. Simple, predictable, debuggable.
 ### Future: Parallel
 
 Multiple independent tasks in parallel:
+
 - Only if no dependencies
 - Separate sandboxes
 - Merge results
@@ -308,4 +316,4 @@ interface LoopHooks {
 
 ---
 
-*Referenced by: [AGENTS.md](../AGENTS.md), [runtime/loop.ts](../runtime/loop.ts)*
+_Referenced by: [AGENTS.md](../AGENTS.md), [runtime/loop.ts](../runtime/loop.ts)_

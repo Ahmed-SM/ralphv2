@@ -770,6 +770,35 @@ Next steps for production readiness:
 - [x] Unit tests — resolveCommand: 3 tests (review, approve, reject)
 - [x] Total: 47 new tests (1582 total across 36 test files)
 
+### Inductive External Delivery OS (Phase 43) 🟡 PLANNED
+> Prove Ralph can deliver other systems end-to-end with the same markdown-native workflow.
+
+- [ ] **Define induction invariant (system-level contract):**
+  - "Given only repo + markdown specs + policies, Ralph can deliver a scoped feature safely, with measurable quality."
+  - Record invariant in [specs/loop-mechanics.md](./specs/loop-mechanics.md) and runtime validation checks.
+  - Add KPI set for each run: success rate, cycle time, escaped defects, rollback rate, human interventions.
+- [ ] **Add external-system bootstrap pipeline:**
+  - Input: arbitrary repository + minimal policy/config
+  - Output: generated `specs/*.md` baseline and `implementation-plan.md` for that target system
+  - Generate spec set (initial minimum):
+    - `specs/system-context.md`
+    - `specs/architecture.md`
+    - `specs/delivery-workflow.md`
+    - `specs/quality-gates.md`
+  - Generate task graph in `implementation-plan.md` with explicit phase/task citations.
+- [ ] **Human-on-the-loop planning review and approval:**
+  - Reuse review lifecycle: draft → pending_review → approved | rejected → applied
+  - Add review command(s) for generated plans/specs before execution starts
+  - Persist reviewer decisions and rationale in `state/learning.jsonl`.
+- [ ] **Knowledge tailoring + maintenance loop (per target system):**
+  - Detect drift between codebase reality and generated specs/plans
+  - Propose incremental updates to `specs/*.md` and `implementation-plan.md`
+  - Keep historical rationale/version trail in append-only learning events.
+- [ ] **Cross-project proof of induction:**
+  - Pilot on at least 3 external repositories with different stacks
+  - Require invariant pass for N consecutive tasks per repo before autonomy is increased
+  - Publish comparative dashboard for each repo using shared KPI schema.
+
 ## Dependencies
 
 ```
@@ -784,6 +813,8 @@ Phase 4 (Git Watcher) ✅
 Phase 5 (Learning) ✅
     ↓
 Phase 6 (Just-Bash) ✅
+    ↓
+Phase 43 (Inductive External Delivery) 🟡
 ```
 
 ## Success Criteria
@@ -825,7 +856,14 @@ Phase 6 complete: ✅
 - [x] Resource usage tracking
 - [x] Autonomous loop execution tested
 
+Phase 43 planned: 🟡
+- [ ] Induction invariant encoded as enforceable runtime contract
+- [ ] Bootstrap generation of `specs/*.md` and `implementation-plan.md` for external repos
+- [ ] Human review required for generated plans before execution
+- [ ] Drift-aware spec/plan tailoring loop with append-only rationale
+- [ ] External pilot proof across 3 heterogeneous repositories
+
 ---
 
-*Status: All core phases complete - Ralph v1 MVP ready*
-*Human review: Required for production deployment*
+*Status: Ralph v1 MVP complete; Phase 43 planned for external-system induction*
+*Human review: Required for generated plans/specs and production deployment*

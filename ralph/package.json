@@ -23,6 +23,7 @@
     "learn:dry": "tsx skills/discovery/learn-cli.ts --dry-run"
   },
   "dependencies": {
+    "@rollup/rollup-win32-x64-msvc": "^4.57.1",
     "@types/mdast": "^4.0.0",
     "remark": "^15.0.0",
     "remark-gfm": "^4.0.0",

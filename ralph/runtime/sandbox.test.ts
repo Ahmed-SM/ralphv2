@@ -340,7 +340,7 @@ describe('Sandbox', () => {
 
     it('sets RALPH_SANDBOX env var', async () => {
       const sandbox = new Sandbox(workDir, makeConfig());
-      const result = await sandbox.bash('node -e "console.log(process.env.RALPH_SANDBOX)"');
+      const result = await sandbox.bash('printenv RALPH_SANDBOX');
       expect(result.stdout.trim()).toBe('true');
     });
   });

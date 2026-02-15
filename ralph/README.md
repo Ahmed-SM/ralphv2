@@ -19,12 +19,19 @@ Ralph follows these core principles:
 # Install dependencies
 npm install
 
-# Run Ralph
+# Run Ralph loop
 npm run ralph
 
-# Or with options
+# Run with options
 npm run ralph -- --dry-run
 npm run ralph -- --task RALPH-001
+
+# Other CLI commands
+npm run ralph -- status
+npm run ralph -- dashboard
+npm run ralph -- review
+npm run ralph -- approve IMPROVE-001
+npm run ralph -- reject IMPROVE-001 --reason="not applicable"
 ```
 
 ## Structure
@@ -157,16 +164,22 @@ npm test
 
 # Dev mode (watch)
 npm run dev
+
+# Module CLIs (legacy/direct)
+npm run discover
+npm run sync
+npm run watch
+npm run learn
 ```
 
 ## Current Status
 
-- ✅ Phase 1: Foundation (complete)
-- ✅ Phase 2: Task Discovery (complete)
-- ✅ Phase 3: Tracker Sync (complete)
-- ✅ Phase 4: Git Watcher (complete)
-- ✅ Phase 5: Learning Layer (complete)
-- ✅ Phase 6: Just-Bash Integration (complete)
+- ✅ Phases 1-6 complete: Foundation, discovery, tracker sync, git watcher, learning layer, sandbox execution
+- ✅ Phases 7-18 complete: Expanded unit/property/integration/live-git coverage and loop orchestration hardening
+- ✅ Phase 19 complete: Tracker sync integrated into main runtime loop
+- ✅ Phase 20 complete: LLM orchestration (provider abstraction, tool calls, iteration execution)
+- ✅ Phase 21 complete: Concrete Anthropic/OpenAI provider clients
+- ✅ Human-in-the-loop improvement review CLI implemented (`review`, `approve`, `reject`)
 
 ## References
 
