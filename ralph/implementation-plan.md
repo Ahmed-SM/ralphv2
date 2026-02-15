@@ -80,19 +80,20 @@ Build Ralph: a self-evolving agentic delivery system that reads specs, extracts 
 
 ## Current Task
 
-**Retry onFailure Mode Implemented**
+**Failure Mode Pattern Detector Implemented**
 
 Ralph v1 MVP is now functional with:
 - Task discovery from markdown specs
 - Tracker sync (Jira, GitHub Issues, Linear adapters)
 - Git activity watching
-- Learning system with pattern detection
+- Learning system with pattern detection (12 detectors including failure modes)
 - Sandboxed execution environment
 - Retry mode for failed tasks (onFailure: 'retry' with configurable maxRetries)
+- Notification system (console/Slack/email channels)
 - Unit test suite (679 tests across 20 core modules)
 - Property-based test suite (79 tests across 4 parsing/state modules)
 - Integration test suite (56 tests across 3 pipelines, including live git)
-- CLI commands: run, discover, sync, status, learn
+- CLI commands: run, discover, sync, status, learn, dashboard
 
 ### Test Coverage (Phase 7) ✅ COMPLETE
 - [x] parse-markdown.ts — 12 tests (parsing, metadata extraction, task list flattening)
@@ -702,6 +703,29 @@ Next steps for production readiness:
   - notifyLimitReached — 2 tests (dispatch, respects disabled flags)
   - integration scenarios — 3 tests (full anomaly→slack, full completion→email, all disabled)
 - [x] Total: 51 new tests (1516 total across 36 test files)
+
+### Failure Mode Pattern Detector (Phase 41) ✅ COMPLETE
+- [x] Implement `detectFailureModes()` → [skills/discovery/detect-patterns.ts](./skills/discovery/detect-patterns.ts)
+  - Groups failed/blocked/cancelled tasks by area (aggregate/domain) to find recurring failure concentrations
+  - Falls back to grouping by task type when no single area has >= 2 failures
+  - Combines task status (blocked/cancelled) with metrics blockers > 0 for comprehensive failure detection
+  - Deduplicates tasks that appear in both task map and metrics
+  - Computes failure rate when total tasks in area is known
+  - Confidence scales with failure count (min 2 failures to trigger, confidence = min(count/6, 1) * 0.8)
+  - Reports top failure area/type, failure count, total failures, failure rate, suggestion
+- [x] Added `detectFailureModes` to `detectPatterns()` detector array (was missing — `failure_mode` was in PatternType but had no detector)
+- [x] Exported `detectFailureModes` for direct testing
+- [x] Unit tests — 19 tests
+  - Area-based detection — 3 tests (blocked status, cancelled status, metrics with blockers)
+  - Threshold — 2 tests (< 2 failures returns null, non-failed statuses ignored)
+  - Fallback grouping — 3 tests (type fallback, type grouping returns null when < 2, spread across areas)
+  - Area selection — 2 tests (domain fallback, most failures first)
+  - Deduplication — 1 test (task map + metrics same taskId counted once)
+  - Data fields — 4 tests (failure rate, suggestion, evidence, totalFailures)
+  - Confidence — 1 test (scales with failure count)
+  - Integration — 2 tests (included in detectPatterns array, type grouping suggestion)
+  - Combined sources — 1 test (task status + metric blockers combined)
+- [x] Total: 19 new tests (1535 total across 36 test files)
 
 ## Dependencies
 

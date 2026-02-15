@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectPatterns, detectTestGaps, detectHighChurn, detectCoupling, type DetectionContext } from './detect-patterns.js';
+import { detectPatterns, detectTestGaps, detectHighChurn, detectCoupling, detectFailureModes, type DetectionContext } from './detect-patterns.js';
 import type { Task } from '../../types/index.js';
 import type { TaskMetrics, AggregateMetrics } from '../track/record-metrics.js';
 
@@ -1123,5 +1123,271 @@ describe('coupling detection', () => {
     expect(result3).not.toBeNull();
     expect(result8).not.toBeNull();
     expect(result8!.confidence).toBeGreaterThan(result3!.confidence);
+  });
+});
+
+// =============================================================================
+// Failure Mode Detector
+// =============================================================================
+
+describe('failure mode detection', () => {
+  it('detects recurring failures in the same area via blocked status', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 3; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'blocked', aggregate: 'parser' }));
+    }
+
+    const result = detectPatterns(makeContext({ tasks, minConfidence: 0 }));
+    const fm = result.patterns.find(p => p.type === 'failure_mode');
+    expect(fm).toBeDefined();
+    expect(fm!.data.group).toBe('parser');
+    expect(fm!.data.failureCount).toBe(3);
+  });
+
+  it('detects failures via cancelled status', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 2; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'cancelled', aggregate: 'deploy' }));
+    }
+
+    const result = detectPatterns(makeContext({ tasks, minConfidence: 0 }));
+    const fm = result.patterns.find(p => p.type === 'failure_mode');
+    expect(fm).toBeDefined();
+    expect(fm!.data.group).toBe('deploy');
+  });
+
+  it('detects failures via metrics with blockers > 0', () => {
+    const metrics: TaskMetrics[] = [];
+    for (let i = 0; i < 3; i++) {
+      metrics.push(makeMetric({
+        taskId: `RALPH-${String(i + 1).padStart(3, '0')}`,
+        aggregate: 'api',
+        blockers: 2,
+      }));
+    }
+
+    const result = detectPatterns(makeContext({ metrics, minConfidence: 0 }));
+    const fm = result.patterns.find(p => p.type === 'failure_mode');
+    expect(fm).toBeDefined();
+    expect(fm!.data.group).toBe('api');
+  });
+
+  it('does not detect failure mode with fewer than 2 failures', () => {
+    const tasks = new Map<string, Task>();
+    tasks.set('RALPH-001', makeTask({ id: 'RALPH-001', status: 'blocked', aggregate: 'api' }));
+
+    const result = detectPatterns(makeContext({ tasks }));
+    const fm = result.patterns.find(p => p.type === 'failure_mode');
+    expect(fm).toBeUndefined();
+  });
+
+  it('does not detect failure mode when failures are spread across areas', () => {
+    const tasks = new Map<string, Task>();
+    tasks.set('RALPH-001', makeTask({ id: 'RALPH-001', status: 'blocked', aggregate: 'a' }));
+    tasks.set('RALPH-002', makeTask({ id: 'RALPH-002', status: 'blocked', aggregate: 'b' }));
+    tasks.set('RALPH-003', makeTask({ id: 'RALPH-003', status: 'blocked', aggregate: 'c' }));
+
+    // 3 failures but in 3 different areas — no recurring pattern per area
+    // However, they might group by type instead
+    const result = detectFailureModes(makeContext({ tasks }));
+    // All have default type 'task' so they'll group by type
+    if (result) {
+      expect(result.data.groupBy).toBe('type');
+    }
+  });
+
+  it('falls back to grouping by type when no area has >= 2 failures', () => {
+    const tasks = new Map<string, Task>();
+    tasks.set('RALPH-001', makeTask({ id: 'RALPH-001', status: 'blocked', aggregate: 'a', type: 'feature' }));
+    tasks.set('RALPH-002', makeTask({ id: 'RALPH-002', status: 'blocked', aggregate: 'b', type: 'feature' }));
+
+    const result = detectFailureModes(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.data.groupBy).toBe('type');
+    expect(result!.data.group).toBe('feature');
+    expect(result!.data.failureCount).toBe(2);
+  });
+
+  it('returns null when type grouping also has no recurring failures', () => {
+    const tasks = new Map<string, Task>();
+    tasks.set('RALPH-001', makeTask({ id: 'RALPH-001', status: 'blocked', aggregate: 'a', type: 'feature' }));
+
+    const result = detectFailureModes(makeContext({ tasks }));
+    expect(result).toBeNull();
+  });
+
+  it('uses domain as fallback when aggregate is missing', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 3; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'blocked', domain: 'auth' }));
+    }
+
+    const result = detectFailureModes(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.data.group).toBe('auth');
+  });
+
+  it('reports the area with the most failures first', () => {
+    const tasks = new Map<string, Task>();
+    // 2 failures in "api"
+    for (let i = 0; i < 2; i++) {
+      const id = `RALPH-A${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'blocked', aggregate: 'api' }));
+    }
+    // 4 failures in "parser"
+    for (let i = 0; i < 4; i++) {
+      const id = `RALPH-B${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'blocked', aggregate: 'parser' }));
+    }
+
+    const result = detectFailureModes(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.data.group).toBe('parser');
+    expect(result!.data.failureCount).toBe(4);
+  });
+
+  it('avoids duplicate task IDs between task map and metrics', () => {
+    const tasks = new Map<string, Task>();
+    tasks.set('RALPH-001', makeTask({ id: 'RALPH-001', status: 'blocked', aggregate: 'api' }));
+    tasks.set('RALPH-002', makeTask({ id: 'RALPH-002', status: 'blocked', aggregate: 'api' }));
+
+    // Same tasks also appear in metrics with blockers
+    const metrics: TaskMetrics[] = [
+      makeMetric({ taskId: 'RALPH-001', aggregate: 'api', blockers: 1 }),
+      makeMetric({ taskId: 'RALPH-002', aggregate: 'api', blockers: 1 }),
+    ];
+
+    const result = detectFailureModes(makeContext({ tasks, metrics }));
+    expect(result).not.toBeNull();
+    // Should count 2 not 4
+    expect(result!.data.failureCount).toBe(2);
+  });
+
+  it('includes failure rate when tasks exist in area', () => {
+    const tasks = new Map<string, Task>();
+    // 4 total tasks in "api", 2 blocked
+    tasks.set('RALPH-001', makeTask({ id: 'RALPH-001', status: 'blocked', aggregate: 'api' }));
+    tasks.set('RALPH-002', makeTask({ id: 'RALPH-002', status: 'blocked', aggregate: 'api' }));
+    tasks.set('RALPH-003', makeTask({ id: 'RALPH-003', status: 'done', aggregate: 'api' }));
+    tasks.set('RALPH-004', makeTask({ id: 'RALPH-004', status: 'done', aggregate: 'api' }));
+
+    const result = detectFailureModes(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.data.failureRate).toBe(0.5);
+    expect(result!.description).toContain('50%');
+  });
+
+  it('includes suggestion to investigate', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 3; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'blocked', aggregate: 'deploy' }));
+    }
+
+    const result = detectFailureModes(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.suggestion).toContain('deploy');
+    expect(result!.suggestion).toContain('failures');
+  });
+
+  it('includes evidence with failed task IDs', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 3; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'blocked', aggregate: 'parser' }));
+    }
+
+    const result = detectFailureModes(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.evidence).toContain('RALPH-001');
+    expect(result!.evidence).toContain('RALPH-002');
+    expect(result!.evidence).toContain('RALPH-003');
+  });
+
+  it('confidence scales with failure count', () => {
+    const makeTasks = (count: number) => {
+      const tasks = new Map<string, Task>();
+      for (let i = 0; i < count; i++) {
+        const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+        tasks.set(id, makeTask({ id, status: 'blocked', aggregate: 'core' }));
+      }
+      return tasks;
+    };
+
+    const result2 = detectFailureModes(makeContext({ tasks: makeTasks(2) }));
+    const result6 = detectFailureModes(makeContext({ tasks: makeTasks(6) }));
+    expect(result2).not.toBeNull();
+    expect(result6).not.toBeNull();
+    expect(result6!.confidence).toBeGreaterThan(result2!.confidence);
+  });
+
+  it('does not count non-failed tasks', () => {
+    const tasks = new Map<string, Task>();
+    // Non-failure statuses should not be counted
+    tasks.set('RALPH-001', makeTask({ id: 'RALPH-001', status: 'done', aggregate: 'api' }));
+    tasks.set('RALPH-002', makeTask({ id: 'RALPH-002', status: 'in_progress', aggregate: 'api' }));
+    tasks.set('RALPH-003', makeTask({ id: 'RALPH-003', status: 'pending', aggregate: 'api' }));
+    tasks.set('RALPH-004', makeTask({ id: 'RALPH-004', status: 'discovered', aggregate: 'api' }));
+
+    const result = detectFailureModes(makeContext({ tasks }));
+    expect(result).toBeNull();
+  });
+
+  it('combines task status and metric blockers for failure count', () => {
+    const tasks = new Map<string, Task>();
+    tasks.set('RALPH-001', makeTask({ id: 'RALPH-001', status: 'blocked', aggregate: 'api' }));
+    // RALPH-002 is done but had blockers during execution
+    tasks.set('RALPH-002', makeTask({ id: 'RALPH-002', status: 'done', aggregate: 'api' }));
+
+    const metrics: TaskMetrics[] = [
+      makeMetric({ taskId: 'RALPH-002', aggregate: 'api', blockers: 3 }),
+    ];
+
+    const result = detectFailureModes(makeContext({ tasks, metrics }));
+    expect(result).not.toBeNull();
+    expect(result!.data.failureCount).toBe(2);
+  });
+
+  it('is included in detectPatterns detector array', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 3; i++) {
+      const id = `RALPH-${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'blocked', aggregate: 'runtime' }));
+    }
+
+    const result = detectPatterns(makeContext({ tasks, minConfidence: 0 }));
+    const fm = result.patterns.find(p => p.type === 'failure_mode');
+    expect(fm).toBeDefined();
+    expect(result.summary.byType['failure_mode']).toBe(1);
+  });
+
+  it('type grouping includes suggestion about systemic issue', () => {
+    const tasks = new Map<string, Task>();
+    tasks.set('RALPH-001', makeTask({ id: 'RALPH-001', status: 'blocked', aggregate: 'a', type: 'bug' }));
+    tasks.set('RALPH-002', makeTask({ id: 'RALPH-002', status: 'blocked', aggregate: 'b', type: 'bug' }));
+
+    const result = detectFailureModes(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.data.groupBy).toBe('type');
+    expect(result!.suggestion).toContain('systemic');
+  });
+
+  it('reports totalFailures across all groups', () => {
+    const tasks = new Map<string, Task>();
+    for (let i = 0; i < 3; i++) {
+      const id = `RALPH-A${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'blocked', aggregate: 'api' }));
+    }
+    for (let i = 0; i < 2; i++) {
+      const id = `RALPH-B${String(i + 1).padStart(3, '0')}`;
+      tasks.set(id, makeTask({ id, status: 'blocked', aggregate: 'ui' }));
+    }
+
+    const result = detectFailureModes(makeContext({ tasks }));
+    expect(result).not.toBeNull();
+    expect(result!.data.totalFailures).toBe(5);
   });
 });

@@ -79,6 +79,7 @@ export function detectPatterns(context: DetectionContext): PatternDetectionResul
     detectTestGaps,
     detectHighChurn,
     detectCoupling,
+    detectFailureModes,
   ];
 
   for (const detector of detectors) {
@@ -669,6 +670,128 @@ export function detectCoupling(context: DetectionContext): DetectedPattern | nul
     },
     evidence: topPair[1].taskIds.slice(0, 5),
     suggestion: `Consider decoupling "${areaA}" and "${areaB}" to reduce change dependencies`,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Detect recurring failure patterns — areas or task types that fail repeatedly
+ *
+ * Groups failed/blocked tasks by aggregate/domain/type and identifies
+ * concentrations of failures that suggest systemic issues.
+ * Per spec: requires >= 2 recurring failures in the same area.
+ */
+export function detectFailureModes(context: DetectionContext): DetectedPattern | null {
+  // Collect failed tasks: blocked or tasks with high blocker counts in metrics
+  const failedTasks: Array<{ taskId: string; aggregate?: string; domain?: string; type: TaskType; reason?: string }> = [];
+
+  // From task map: tasks in blocked status
+  for (const task of context.tasks.values()) {
+    if (task.status === 'blocked' || task.status === 'cancelled') {
+      failedTasks.push({
+        taskId: task.id,
+        aggregate: task.aggregate,
+        domain: task.domain,
+        type: task.type,
+      });
+    }
+  }
+
+  // From metrics: tasks with blockers > 0 (indicates they hit blockers during execution)
+  for (const m of context.metrics) {
+    if (m.blockers !== undefined && m.blockers > 0) {
+      // Avoid duplicates if task is already in failedTasks
+      if (!failedTasks.some(f => f.taskId === m.taskId)) {
+        failedTasks.push({
+          taskId: m.taskId,
+          aggregate: m.aggregate,
+          domain: m.domain,
+          type: m.type,
+        });
+      }
+    }
+  }
+
+  if (failedTasks.length < 2) {
+    return null;
+  }
+
+  // Group by area (aggregate or domain fallback)
+  const byArea = new Map<string, typeof failedTasks>();
+  for (const f of failedTasks) {
+    const key = f.aggregate || f.domain || 'unknown';
+    const list = byArea.get(key) || [];
+    list.push(f);
+    byArea.set(key, list);
+  }
+
+  // Find areas with recurring failures (>= 2)
+  const recurringAreas = Array.from(byArea.entries())
+    .filter(([, failures]) => failures.length >= 2)
+    .sort((a, b) => b[1].length - a[1].length);
+
+  if (recurringAreas.length === 0) {
+    // Fall back to grouping by type
+    const byType = new Map<string, typeof failedTasks>();
+    for (const f of failedTasks) {
+      const list = byType.get(f.type) || [];
+      list.push(f);
+      byType.set(f.type, list);
+    }
+
+    const recurringTypes = Array.from(byType.entries())
+      .filter(([, failures]) => failures.length >= 2)
+      .sort((a, b) => b[1].length - a[1].length);
+
+    if (recurringTypes.length === 0) {
+      return null;
+    }
+
+    const topType = recurringTypes[0];
+    return {
+      type: 'failure_mode',
+      confidence: Math.min(topType[1].length / 6, 1) * 0.8,
+      description: `"${topType[0]}" tasks have ${topType[1].length} failures — recurring failure pattern`,
+      data: {
+        groupBy: 'type',
+        group: topType[0],
+        failureCount: topType[1].length,
+        totalFailures: failedTasks.length,
+        failures: recurringTypes.slice(0, 5).map(([name, failures]) => ({
+          name,
+          count: failures.length,
+        })),
+      },
+      evidence: topType[1].map(f => f.taskId),
+      suggestion: `Investigate why "${topType[0]}" tasks fail repeatedly — may indicate a systemic issue`,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  const topArea = recurringAreas[0];
+  // Calculate failure rate for the area vs total tasks in that area
+  const totalTasksInArea = Array.from(context.tasks.values())
+    .filter(t => (t.aggregate || t.domain || 'unknown') === topArea[0]).length;
+  const failureRate = totalTasksInArea > 0 ? topArea[1].length / totalTasksInArea : 0;
+
+  return {
+    type: 'failure_mode',
+    confidence: Math.min(topArea[1].length / 6, 1) * 0.8,
+    description: `"${topArea[0]}" has ${topArea[1].length} failures${totalTasksInArea > 0 ? ` (${(failureRate * 100).toFixed(0)}% failure rate)` : ''}`,
+    data: {
+      groupBy: 'area',
+      group: topArea[0],
+      failureCount: topArea[1].length,
+      totalFailures: failedTasks.length,
+      totalTasksInArea,
+      failureRate,
+      failures: recurringAreas.slice(0, 5).map(([name, failures]) => ({
+        name,
+        count: failures.length,
+      })),
+    },
+    evidence: topArea[1].map(f => f.taskId),
+    suggestion: `Investigate recurring failures in "${topArea[0]}" — ${topArea[1].length} tasks have failed`,
     timestamp: new Date().toISOString(),
   };
 }
