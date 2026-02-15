@@ -9,12 +9,15 @@ import {
   runStatus,
   runSync,
   runLearn,
+  runDashboard,
+  buildDashboardData,
+  formatDashboard,
   loadConfig,
   HELP_TEXT,
   BANNER,
   DEFAULT_CONFIG_PATH,
 } from './cli.js';
-import type { CliDeps, ParsedArgs } from './cli.js';
+import type { CliDeps, ParsedArgs, DashboardData } from './cli.js';
 
 // =============================================================================
 // HELPERS
@@ -1284,5 +1287,469 @@ describe('runLearn', () => {
     expect(code).toBe(0);
     const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
     expect(logged).toContain('DRY RUN');
+  });
+});
+
+// =============================================================================
+// buildDashboardData
+// =============================================================================
+
+describe('buildDashboardData', () => {
+  it('returns empty data when all inputs are empty', () => {
+    const data = buildDashboardData([], [], []);
+    expect(data.tasksCompleted).toBe(0);
+    expect(data.tasksFailed).toBe(0);
+    expect(data.avgIterations).toBe(0);
+    expect(data.estimationAccuracy).toBe(0);
+    expect(data.patterns).toEqual([]);
+    expect(data.anomalies).toEqual([]);
+    expect(data.improvementsApplied).toBe(0);
+    expect(data.improvementsPending).toBe(0);
+    expect(data.improvementsRejected).toBe(0);
+  });
+
+  it('counts completed tasks', () => {
+    const taskLines = [
+      JSON.stringify({ op: 'create', task: { id: 'R-001', title: 'A', status: 'done', type: 'task' } }),
+      JSON.stringify({ op: 'create', task: { id: 'R-002', title: 'B', status: 'done', type: 'task' } }),
+      JSON.stringify({ op: 'create', task: { id: 'R-003', title: 'C', status: 'pending', type: 'task' } }),
+    ];
+    const data = buildDashboardData([], taskLines, []);
+    expect(data.tasksCompleted).toBe(2);
+  });
+
+  it('counts failed tasks (blocked and cancelled)', () => {
+    const taskLines = [
+      JSON.stringify({ op: 'create', task: { id: 'R-001', title: 'A', status: 'blocked', type: 'task' } }),
+      JSON.stringify({ op: 'create', task: { id: 'R-002', title: 'B', status: 'cancelled', type: 'task' } }),
+      JSON.stringify({ op: 'create', task: { id: 'R-003', title: 'C', status: 'done', type: 'task' } }),
+    ];
+    const data = buildDashboardData([], taskLines, []);
+    expect(data.tasksFailed).toBe(2);
+    expect(data.tasksCompleted).toBe(1);
+  });
+
+  it('replays update operations for correct status', () => {
+    const taskLines = [
+      JSON.stringify({ op: 'create', task: { id: 'R-001', title: 'A', status: 'pending', type: 'task' } }),
+      JSON.stringify({ op: 'update', id: 'R-001', changes: { status: 'done' } }),
+    ];
+    const data = buildDashboardData([], taskLines, []);
+    expect(data.tasksCompleted).toBe(1);
+  });
+
+  it('extracts patterns from learning events', () => {
+    const learningLines = [
+      JSON.stringify({ type: 'pattern_detected', pattern: 'estimation_drift', confidence: 0.85, data: { factor: 1.8 }, evidence: [], timestamp: new Date().toISOString() }),
+      JSON.stringify({ type: 'pattern_detected', pattern: 'bug_hotspot', confidence: 0.9, data: { area: 'src/payments/', count: 5 }, evidence: [], timestamp: new Date().toISOString() }),
+    ];
+    const data = buildDashboardData(learningLines, [], []);
+    expect(data.patterns).toHaveLength(2);
+    expect(data.patterns[0].pattern).toBe('estimation_drift');
+    expect(data.patterns[0].description).toContain('1.8x multiplier');
+    expect(data.patterns[1].description).toContain('src/payments/');
+    expect(data.patterns[1].description).toContain('5 occurrences');
+  });
+
+  it('counts improvement statuses from learning events', () => {
+    const learningLines = [
+      JSON.stringify({ type: 'improvement_proposed', status: 'applied', timestamp: new Date().toISOString() }),
+      JSON.stringify({ type: 'improvement_proposed', status: 'applied', timestamp: new Date().toISOString() }),
+      JSON.stringify({ type: 'improvement_proposed', status: 'pending', timestamp: new Date().toISOString() }),
+      JSON.stringify({ type: 'improvement_proposed', status: 'rejected', timestamp: new Date().toISOString() }),
+    ];
+    const data = buildDashboardData(learningLines, [], []);
+    expect(data.improvementsApplied).toBe(2);
+    expect(data.improvementsPending).toBe(1);
+    expect(data.improvementsRejected).toBe(1);
+  });
+
+  it('counts improvement_applied events', () => {
+    const learningLines = [
+      JSON.stringify({ type: 'improvement_applied', id: 'P-001', branch: 'ralph/learn-123', timestamp: new Date().toISOString() }),
+    ];
+    const data = buildDashboardData(learningLines, [], []);
+    expect(data.improvementsApplied).toBe(1);
+  });
+
+  it('extracts anomalies from learning events', () => {
+    const learningLines = [
+      JSON.stringify({ type: 'anomaly_detected', anomaly: 'Took 12 iterations (expected 3)', severity: 'high', context: { taskId: 'RALPH-042' }, timestamp: new Date().toISOString() }),
+    ];
+    const data = buildDashboardData(learningLines, [], []);
+    expect(data.anomalies).toHaveLength(1);
+    expect(data.anomalies[0].taskId).toBe('RALPH-042');
+    expect(data.anomalies[0].description).toContain('12 iterations');
+    expect(data.anomalies[0].severity).toBe('high');
+  });
+
+  it('computes average iterations from progress events', () => {
+    const progressLines = [
+      JSON.stringify({ type: 'iteration', taskId: 'R-001', iteration: 1, timestamp: new Date().toISOString() }),
+      JSON.stringify({ type: 'iteration', taskId: 'R-001', iteration: 2, timestamp: new Date().toISOString() }),
+      JSON.stringify({ type: 'iteration', taskId: 'R-002', iteration: 1, timestamp: new Date().toISOString() }),
+      JSON.stringify({ type: 'iteration', taskId: 'R-002', iteration: 2, timestamp: new Date().toISOString() }),
+      JSON.stringify({ type: 'iteration', taskId: 'R-002', iteration: 3, timestamp: new Date().toISOString() }),
+      JSON.stringify({ type: 'iteration', taskId: 'R-002', iteration: 4, timestamp: new Date().toISOString() }),
+    ];
+    const data = buildDashboardData([], [], progressLines);
+    // R-001: 2 iterations, R-002: 4 iterations → avg 3.0
+    expect(data.avgIterations).toBe(3);
+  });
+
+  it('computes estimation accuracy from task estimates', () => {
+    const taskLines = [
+      // estimate=5, actual=5 → ratio 1.0 → accurate
+      JSON.stringify({ op: 'create', task: { id: 'R-001', title: 'A', status: 'done', type: 'task', estimate: 5, actual: 5 } }),
+      // estimate=5, actual=10 → ratio 2.0 → inaccurate
+      JSON.stringify({ op: 'create', task: { id: 'R-002', title: 'B', status: 'done', type: 'task', estimate: 5, actual: 10 } }),
+      // estimate=4, actual=4 → ratio 1.0 → accurate
+      JSON.stringify({ op: 'create', task: { id: 'R-003', title: 'C', status: 'done', type: 'task', estimate: 4, actual: 4 } }),
+    ];
+    const data = buildDashboardData([], taskLines, []);
+    // 2 out of 3 accurate → 66.67%
+    expect(data.estimationAccuracy).toBeCloseTo(66.67, 0);
+  });
+
+  it('skips invalid JSON lines gracefully', () => {
+    const learningLines = ['not json', '{ invalid', JSON.stringify({ type: 'anomaly_detected', anomaly: 'test', severity: 'low', context: {}, timestamp: new Date().toISOString() })];
+    const data = buildDashboardData(learningLines, ['bad json'], ['bad json']);
+    expect(data.anomalies).toHaveLength(1);
+    expect(data.tasksCompleted).toBe(0);
+  });
+
+  it('includes period label with days window', () => {
+    const data = buildDashboardData([], [], [], 7);
+    expect(data.period).toContain('Last 7 days');
+  });
+
+  it('handles pattern with coverage data', () => {
+    const learningLines = [
+      JSON.stringify({ type: 'pattern_detected', pattern: 'test_gap', confidence: 0.8, data: { area: 'utils/', coverage: 0.32 }, evidence: [], timestamp: new Date().toISOString() }),
+    ];
+    const data = buildDashboardData(learningLines, [], []);
+    expect(data.patterns[0].description).toContain('32% coverage');
+    expect(data.patterns[0].description).toContain('utils/');
+  });
+
+  it('handles pattern with avgFilesPerTask data', () => {
+    const learningLines = [
+      JSON.stringify({ type: 'pattern_detected', pattern: 'high_churn', confidence: 0.75, data: { area: 'config/', avgFilesPerTask: 4.5 }, evidence: [], timestamp: new Date().toISOString() }),
+    ];
+    const data = buildDashboardData(learningLines, [], []);
+    expect(data.patterns[0].description).toContain('4.5 files/task');
+  });
+
+  it('handles anomaly without taskId', () => {
+    const learningLines = [
+      JSON.stringify({ type: 'anomaly_detected', anomaly: 'Global anomaly', severity: 'medium', context: {}, timestamp: new Date().toISOString() }),
+    ];
+    const data = buildDashboardData(learningLines, [], []);
+    expect(data.anomalies[0].taskId).toBeUndefined();
+    expect(data.anomalies[0].severity).toBe('medium');
+  });
+
+  it('skips blank lines', () => {
+    const data = buildDashboardData(['', '  ', '\t'], ['', '  '], ['', '  ']);
+    expect(data.tasksCompleted).toBe(0);
+    expect(data.patterns).toHaveLength(0);
+  });
+
+  it('ignores tasks without estimates for accuracy', () => {
+    const taskLines = [
+      JSON.stringify({ op: 'create', task: { id: 'R-001', title: 'A', status: 'done', type: 'task' } }),
+    ];
+    const data = buildDashboardData([], taskLines, []);
+    expect(data.estimationAccuracy).toBe(0);
+  });
+});
+
+// =============================================================================
+// formatDashboard
+// =============================================================================
+
+describe('formatDashboard', () => {
+  const emptyData: DashboardData = {
+    period: 'Last 30 days (2026-02-15)',
+    tasksCompleted: 0,
+    tasksFailed: 0,
+    avgIterations: 0,
+    estimationAccuracy: 0,
+    patterns: [],
+    improvementsApplied: 0,
+    improvementsPending: 0,
+    improvementsRejected: 0,
+    anomalies: [],
+  };
+
+  it('includes dashboard header', () => {
+    const output = formatDashboard(emptyData).join('\n');
+    expect(output).toContain('LEARNING DASHBOARD');
+  });
+
+  it('includes period label', () => {
+    const output = formatDashboard(emptyData).join('\n');
+    expect(output).toContain('Last 30 days (2026-02-15)');
+  });
+
+  it('shows task metrics section', () => {
+    const data: DashboardData = { ...emptyData, tasksCompleted: 47, tasksFailed: 3 };
+    const output = formatDashboard(data).join('\n');
+    expect(output).toContain('### Task Metrics');
+    expect(output).toContain('Tasks completed:     47');
+    expect(output).toContain('Tasks failed:        3');
+  });
+
+  it('shows average iterations when present', () => {
+    const data: DashboardData = { ...emptyData, avgIterations: 2.3 };
+    const output = formatDashboard(data).join('\n');
+    expect(output).toContain('Average iterations:  2.3');
+  });
+
+  it('hides average iterations when zero', () => {
+    const output = formatDashboard(emptyData).join('\n');
+    expect(output).not.toContain('Average iterations');
+  });
+
+  it('shows estimation accuracy when present', () => {
+    const data: DashboardData = { ...emptyData, estimationAccuracy: 78 };
+    const output = formatDashboard(data).join('\n');
+    expect(output).toContain('Estimation accuracy: 78%');
+  });
+
+  it('hides estimation accuracy when zero', () => {
+    const output = formatDashboard(emptyData).join('\n');
+    expect(output).not.toContain('Estimation accuracy');
+  });
+
+  it('shows patterns when present', () => {
+    const data: DashboardData = {
+      ...emptyData,
+      patterns: [
+        { pattern: 'estimation_drift', description: 'estimation_drift: 1.8x multiplier' },
+        { pattern: 'bug_hotspot', description: 'bug_hotspot: src/payments/, 5 occurrences' },
+      ],
+    };
+    const output = formatDashboard(data).join('\n');
+    expect(output).toContain('### Patterns Detected');
+    expect(output).toContain('- estimation_drift: 1.8x multiplier');
+    expect(output).toContain('- bug_hotspot: src/payments/, 5 occurrences');
+  });
+
+  it('shows no-patterns message when empty', () => {
+    const output = formatDashboard(emptyData).join('\n');
+    expect(output).toContain('No patterns detected');
+  });
+
+  it('shows improvements section', () => {
+    const data: DashboardData = {
+      ...emptyData,
+      improvementsApplied: 3,
+      improvementsPending: 1,
+      improvementsRejected: 1,
+    };
+    const output = formatDashboard(data).join('\n');
+    expect(output).toContain('### Improvements');
+    expect(output).toContain('Applied:  3');
+    expect(output).toContain('Pending:  1');
+    expect(output).toContain('Rejected: 1');
+  });
+
+  it('shows no-improvements message when none', () => {
+    const output = formatDashboard(emptyData).join('\n');
+    expect(output).toContain('No improvements proposed');
+  });
+
+  it('shows anomalies with severity and taskId', () => {
+    const data: DashboardData = {
+      ...emptyData,
+      anomalies: [
+        { taskId: 'RALPH-042', description: 'Took 12 iterations (expected 3)', severity: 'high' },
+      ],
+    };
+    const output = formatDashboard(data).join('\n');
+    expect(output).toContain('### Anomalies');
+    expect(output).toContain('[HIGH] RALPH-042: Took 12 iterations');
+  });
+
+  it('shows anomaly without taskId', () => {
+    const data: DashboardData = {
+      ...emptyData,
+      anomalies: [
+        { description: 'System anomaly', severity: 'medium' },
+      ],
+    };
+    const output = formatDashboard(data).join('\n');
+    expect(output).toContain('[MED] System anomaly');
+  });
+
+  it('shows no-anomalies message when empty', () => {
+    const output = formatDashboard(emptyData).join('\n');
+    expect(output).toContain('No anomalies detected');
+  });
+
+  it('omits severity prefix for low severity', () => {
+    const data: DashboardData = {
+      ...emptyData,
+      anomalies: [{ description: 'Minor thing', severity: 'low' }],
+    };
+    const output = formatDashboard(data).join('\n');
+    expect(output).toContain('- Minor thing');
+    expect(output).not.toContain('[');
+  });
+});
+
+// =============================================================================
+// runDashboard
+// =============================================================================
+
+describe('runDashboard', () => {
+  it('logs dashboard header', async () => {
+    const deps = makeDeps({
+      readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
+    });
+    const args: ParsedArgs = { command: 'dashboard', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runDashboard(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Loading learning dashboard');
+  });
+
+  it('returns 0 even when all files are missing', async () => {
+    const deps = makeDeps({
+      readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
+    });
+    const args: ParsedArgs = { command: 'dashboard', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runDashboard(args, deps);
+
+    expect(code).toBe(0);
+  });
+
+  it('displays completed tasks from tasks.jsonl', async () => {
+    const taskLines = [
+      JSON.stringify({ op: 'create', task: { id: 'R-001', title: 'A', status: 'done', type: 'task' } }),
+      JSON.stringify({ op: 'create', task: { id: 'R-002', title: 'B', status: 'done', type: 'task' } }),
+    ].join('\n');
+
+    const deps = makeDeps({
+      readFile: vi.fn().mockImplementation(async (path: string) => {
+        if (path.endsWith('tasks.jsonl')) return taskLines;
+        throw new Error('ENOENT');
+      }),
+    });
+    const args: ParsedArgs = { command: 'dashboard', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runDashboard(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Tasks completed:     2');
+  });
+
+  it('displays patterns from learning.jsonl', async () => {
+    const learningLines = [
+      JSON.stringify({ type: 'pattern_detected', pattern: 'bug_hotspot', confidence: 0.9, data: { area: 'src/api/', count: 7 }, evidence: [], timestamp: new Date().toISOString() }),
+    ].join('\n');
+
+    const deps = makeDeps({
+      readFile: vi.fn().mockImplementation(async (path: string) => {
+        if (path.endsWith('learning.jsonl')) return learningLines;
+        throw new Error('ENOENT');
+      }),
+    });
+    const args: ParsedArgs = { command: 'dashboard', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runDashboard(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('bug_hotspot');
+    expect(logged).toContain('src/api/');
+  });
+
+  it('displays anomalies from learning.jsonl', async () => {
+    const learningLines = [
+      JSON.stringify({ type: 'anomaly_detected', anomaly: 'High iteration count', severity: 'high', context: { taskId: 'R-042' }, timestamp: new Date().toISOString() }),
+    ].join('\n');
+
+    const deps = makeDeps({
+      readFile: vi.fn().mockImplementation(async (path: string) => {
+        if (path.endsWith('learning.jsonl')) return learningLines;
+        throw new Error('ENOENT');
+      }),
+    });
+    const args: ParsedArgs = { command: 'dashboard', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runDashboard(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('[HIGH] R-042: High iteration count');
+  });
+
+  it('displays improvement counts', async () => {
+    const learningLines = [
+      JSON.stringify({ type: 'improvement_proposed', status: 'applied', timestamp: new Date().toISOString() }),
+      JSON.stringify({ type: 'improvement_proposed', status: 'pending', timestamp: new Date().toISOString() }),
+    ].join('\n');
+
+    const deps = makeDeps({
+      readFile: vi.fn().mockImplementation(async (path: string) => {
+        if (path.endsWith('learning.jsonl')) return learningLines;
+        throw new Error('ENOENT');
+      }),
+    });
+    const args: ParsedArgs = { command: 'dashboard', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runDashboard(args, deps);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Applied:  1');
+    expect(logged).toContain('Pending:  1');
+  });
+
+  it('reads all three state files', async () => {
+    const readFile = vi.fn().mockRejectedValue(new Error('ENOENT'));
+    const deps = makeDeps({ readFile });
+    const args: ParsedArgs = { command: 'dashboard', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    await runDashboard(args, deps);
+
+    const paths = readFile.mock.calls.map((c: string[]) => c[0]);
+    expect(paths.some((p: string) => p.endsWith('learning.jsonl'))).toBe(true);
+    expect(paths.some((p: string) => p.endsWith('tasks.jsonl'))).toBe(true);
+    expect(paths.some((p: string) => p.endsWith('progress.jsonl'))).toBe(true);
+  });
+
+  it('works via dispatch', async () => {
+    const deps = makeDeps({
+      readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
+    });
+
+    const code = await dispatch(['dashboard'], deps);
+
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('LEARNING DASHBOARD');
+  });
+});
+
+// =============================================================================
+// parseArgs — dashboard command
+// =============================================================================
+
+describe('parseArgs — dashboard', () => {
+  it('parses dashboard command', () => {
+    const result = parseArgs(['dashboard']);
+    expect(result.command).toBe('dashboard');
+  });
+});
+
+// =============================================================================
+// resolveCommand — dashboard
+// =============================================================================
+
+describe('resolveCommand — dashboard', () => {
+  it('passes through dashboard command', () => {
+    expect(resolveCommand('dashboard')).toBe('dashboard');
   });
 });

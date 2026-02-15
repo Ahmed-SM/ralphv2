@@ -463,6 +463,7 @@ Next steps for production readiness:
 12. Live testing with actual git repository
 13. Live testing with Linear API key
 14. ~~Standalone learn CLI command~~ ✅ Done
+15. ~~Metrics dashboard CLI command~~ ✅ Done
 
 ### Standalone Sync CLI Command (Phase 31) ✅ COMPLETE
 - [x] Implemented `runSync()` in runtime/cli.ts — standalone `ralph sync` command
@@ -650,6 +651,26 @@ Next steps for production readiness:
   - discovered task with higher priority is promoted correctly
   - discovered task targeted by --task filter is promoted
 - [x] Total: 7 new tests (1423 total across 35 test files)
+
+### Metrics Dashboard CLI Command (Phase 39) ✅ COMPLETE
+- [x] Implemented `ralph dashboard` CLI command → [runtime/cli.ts](./runtime/cli.ts)
+  - Reads `state/learning.jsonl`, `state/tasks.jsonl`, `state/progress.jsonl`
+  - Generates formatted learning summary report per specs/learning-system.md
+  - Task metrics: completed count, failed count, average iterations, estimation accuracy
+  - Patterns detected: human-readable descriptions with data (factor, area, coverage, files/task)
+  - Improvements: applied/pending/rejected counts from learning events
+  - Anomalies: severity-tagged with optional task ID
+  - 30-day rolling window filter on timestamped events
+  - Graceful handling of missing state files (returns empty dashboard)
+- [x] Added `dashboard` to CliCommand type, VALID_COMMANDS, HELP_TEXT, dispatch
+- [x] Pure functions `buildDashboardData()` and `formatDashboard()` for testability
+- [x] Exported `runDashboard`, `buildDashboardData`, `formatDashboard`, `DashboardData` from runtime/index.ts
+- [x] Unit tests — 42 tests
+  - buildDashboardData — 18 tests (empty inputs, completed/failed task counts, update replay, pattern extraction with data fields, improvement status counting, improvement_applied events, anomaly extraction, average iterations from progress, estimation accuracy, invalid JSON resilience, period label, coverage/churn patterns, anomaly without taskId, blank lines, no estimates)
+  - formatDashboard — 14 tests (header, period, task metrics, avg iterations show/hide, estimation accuracy show/hide, patterns present/empty, improvements present/empty, anomalies with severity/taskId/no-taskId, low severity prefix omission)
+  - runDashboard — 8 tests (header logging, missing files resilience, task display, pattern display, anomaly display, improvement counts, file reads, dispatch integration)
+  - parseArgs/resolveCommand — 2 tests (dashboard command parsing)
+- [x] Total: 42 new tests (1465 total across 35 test files)
 
 ## Dependencies
 

@@ -12,7 +12,7 @@ import type { RuntimeConfig, TrackerRuntimeConfig } from '../types/index.js';
 // TYPES
 // =============================================================================
 
-export type CliCommand = 'run' | 'discover' | 'sync' | 'status' | 'learn' | 'help';
+export type CliCommand = 'run' | 'discover' | 'sync' | 'status' | 'learn' | 'dashboard' | 'help';
 
 export interface ParsedArgs {
   command: CliCommand;
@@ -53,6 +53,7 @@ Commands:
   sync        Sync tasks with tracker
   status      Show current task status
   learn       Analyze and propose improvements
+  dashboard   Show learning summary report
   help        Show this help
 
 Options:
@@ -67,6 +68,7 @@ Examples:
   ralph status             # Show task status
   ralph sync               # Sync with Jira only
   ralph learn              # Run learning analysis
+  ralph dashboard          # Show learning summary
 `;
 
 export const BANNER = [
@@ -76,7 +78,7 @@ export const BANNER = [
   '\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d',
 ].join('\n');
 
-const VALID_COMMANDS = new Set<CliCommand>(['run', 'discover', 'sync', 'status', 'learn', 'help']);
+const VALID_COMMANDS = new Set<CliCommand>(['run', 'discover', 'sync', 'status', 'learn', 'dashboard', 'help']);
 
 // =============================================================================
 // PARSING
@@ -542,6 +544,285 @@ async function loadTasksForLearning(
 }
 
 // =============================================================================
+// DASHBOARD
+// =============================================================================
+
+/**
+ * Dashboard data aggregated from learning.jsonl, tasks.jsonl, and progress.jsonl.
+ */
+export interface DashboardData {
+  period: string;
+  tasksCompleted: number;
+  tasksFailed: number;
+  avgIterations: number;
+  estimationAccuracy: number;
+  patterns: Array<{ pattern: string; description: string }>;
+  improvementsApplied: number;
+  improvementsPending: number;
+  improvementsRejected: number;
+  anomalies: Array<{ taskId?: string; description: string; severity: string }>;
+}
+
+/**
+ * Build dashboard data from raw JSONL lines.
+ *
+ * Pure function — no I/O, fully testable.
+ */
+export function buildDashboardData(
+  learningLines: string[],
+  taskLines: string[],
+  progressLines: string[],
+  daysWindow: number = 30,
+): DashboardData {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - daysWindow);
+  const cutoffIso = cutoff.toISOString();
+
+  // Parse learning events
+  const patterns: Array<{ pattern: string; description: string }> = [];
+  let improvementsApplied = 0;
+  let improvementsPending = 0;
+  let improvementsRejected = 0;
+  const anomalies: Array<{ taskId?: string; description: string; severity: string }> = [];
+
+  for (const line of learningLines) {
+    if (!line.trim()) continue;
+    let event: Record<string, unknown>;
+    try { event = JSON.parse(line); } catch { continue; }
+
+    const ts = event.timestamp as string | undefined;
+    if (ts && ts < cutoffIso) continue;
+
+    switch (event.type) {
+      case 'pattern_detected': {
+        const data = event.data as Record<string, unknown> | undefined;
+        let desc = String(event.pattern);
+        if (data) {
+          // Build a human-readable description from pattern data
+          const parts: string[] = [];
+          if (data.area) parts.push(String(data.area));
+          if (data.factor) parts.push(`${Number(data.factor).toFixed(1)}x multiplier`);
+          if (data.count) parts.push(`${data.count} occurrences`);
+          if (data.coverage !== undefined) parts.push(`${(Number(data.coverage) * 100).toFixed(0)}% coverage`);
+          if (data.avgFilesPerTask) parts.push(`${Number(data.avgFilesPerTask).toFixed(1)} files/task`);
+          if (parts.length > 0) desc += ': ' + parts.join(', ');
+        }
+        patterns.push({ pattern: String(event.pattern), description: desc });
+        break;
+      }
+      case 'improvement_proposed': {
+        const status = event.status as string;
+        if (status === 'applied') improvementsApplied++;
+        else if (status === 'pending') improvementsPending++;
+        else if (status === 'rejected') improvementsRejected++;
+        break;
+      }
+      case 'improvement_applied': {
+        improvementsApplied++;
+        break;
+      }
+      case 'anomaly_detected': {
+        const ctx = event.context as Record<string, unknown> | undefined;
+        const taskId = ctx?.taskId as string | undefined;
+        const severity = (event.severity as string) || 'medium';
+        anomalies.push({
+          taskId,
+          description: String(event.anomaly || 'Unknown anomaly'),
+          severity,
+        });
+        break;
+      }
+    }
+  }
+
+  // Parse tasks for completion metrics
+  const tasks = new Map<string, Record<string, unknown>>();
+  for (const line of taskLines) {
+    if (!line.trim()) continue;
+    let op: Record<string, unknown>;
+    try { op = JSON.parse(line); } catch { continue; }
+    if (op.op === 'create') {
+      const task = op.task as Record<string, unknown>;
+      tasks.set(task.id as string, { ...task });
+    } else if (op.op === 'update') {
+      const task = tasks.get(op.id as string);
+      if (task) Object.assign(task, op.changes as Record<string, unknown>);
+    }
+  }
+
+  let tasksCompleted = 0;
+  let tasksFailed = 0;
+  for (const task of tasks.values()) {
+    const completedAt = task.completedAt as string | undefined;
+    if (completedAt && completedAt < cutoffIso) continue;
+    if (task.status === 'done') tasksCompleted++;
+    if (task.status === 'cancelled' || task.status === 'blocked') tasksFailed++;
+  }
+
+  // Parse progress for iteration counts
+  const taskIterations = new Map<string, number>();
+  for (const line of progressLines) {
+    if (!line.trim()) continue;
+    let event: Record<string, unknown>;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (event.type === 'iteration') {
+      const ts = event.timestamp as string | undefined;
+      if (ts && ts < cutoffIso) continue;
+      const taskId = event.taskId as string;
+      if (taskId) {
+        taskIterations.set(taskId, (taskIterations.get(taskId) || 0) + 1);
+      }
+    }
+  }
+
+  const iterationCounts = Array.from(taskIterations.values());
+  const avgIterations = iterationCounts.length > 0
+    ? iterationCounts.reduce((a, b) => a + b, 0) / iterationCounts.length
+    : 0;
+
+  // Estimation accuracy from completed tasks with estimates
+  let accurateCount = 0;
+  let estimatedCount = 0;
+  for (const task of tasks.values()) {
+    if (task.status !== 'done') continue;
+    const estimate = task.estimate as number | undefined;
+    const actual = task.actual as number | undefined;
+    if (estimate !== undefined && actual !== undefined && estimate > 0) {
+      estimatedCount++;
+      const ratio = actual / estimate;
+      if (ratio >= 0.8 && ratio <= 1.2) accurateCount++;
+    }
+  }
+  const estimationAccuracy = estimatedCount > 0
+    ? (accurateCount / estimatedCount) * 100
+    : 0;
+
+  // Period label
+  const now = new Date();
+  const period = `Last ${daysWindow} days (${now.toISOString().slice(0, 10)})`;
+
+  return {
+    period,
+    tasksCompleted,
+    tasksFailed,
+    avgIterations,
+    estimationAccuracy,
+    patterns,
+    improvementsApplied,
+    improvementsPending,
+    improvementsRejected,
+    anomalies,
+  };
+}
+
+/**
+ * Format dashboard data as a human-readable report.
+ *
+ * Pure function — no I/O, fully testable.
+ */
+export function formatDashboard(data: DashboardData): string[] {
+  const lines: string[] = [];
+
+  lines.push('');
+  lines.push('\u2554' + '\u2550'.repeat(59) + '\u2557');
+  lines.push('\u2551                   LEARNING DASHBOARD                       \u2551');
+  lines.push('\u255a' + '\u2550'.repeat(59) + '\u255d');
+  lines.push('');
+  lines.push(`Period: ${data.period}`);
+  lines.push('');
+
+  // Task Metrics
+  lines.push('### Task Metrics');
+  lines.push(`  Tasks completed:     ${data.tasksCompleted}`);
+  lines.push(`  Tasks failed:        ${data.tasksFailed}`);
+  if (data.avgIterations > 0) {
+    lines.push(`  Average iterations:  ${data.avgIterations.toFixed(1)}`);
+  }
+  if (data.estimationAccuracy > 0) {
+    lines.push(`  Estimation accuracy: ${data.estimationAccuracy.toFixed(0)}%`);
+  }
+  lines.push('');
+
+  // Patterns Detected
+  lines.push('### Patterns Detected');
+  if (data.patterns.length === 0) {
+    lines.push('  No patterns detected.');
+  } else {
+    for (const p of data.patterns) {
+      lines.push(`  - ${p.description}`);
+    }
+  }
+  lines.push('');
+
+  // Improvements
+  lines.push('### Improvements');
+  const totalImprovements = data.improvementsApplied + data.improvementsPending + data.improvementsRejected;
+  if (totalImprovements === 0) {
+    lines.push('  No improvements proposed.');
+  } else {
+    lines.push(`  Applied:  ${data.improvementsApplied}`);
+    lines.push(`  Pending:  ${data.improvementsPending}`);
+    lines.push(`  Rejected: ${data.improvementsRejected}`);
+  }
+  lines.push('');
+
+  // Anomalies
+  lines.push('### Anomalies');
+  if (data.anomalies.length === 0) {
+    lines.push('  No anomalies detected.');
+  } else {
+    for (const a of data.anomalies) {
+      const prefix = a.taskId ? `${a.taskId}: ` : '';
+      const sev = a.severity === 'high' ? '[HIGH] ' : a.severity === 'medium' ? '[MED] ' : '';
+      lines.push(`  - ${sev}${prefix}${a.description}`);
+    }
+  }
+  lines.push('');
+
+  return lines;
+}
+
+/**
+ * Run the dashboard command — reads state files and displays learning summary.
+ *
+ * Implements the Metrics Dashboard from specs/learning-system.md.
+ */
+export async function runDashboard(args: ParsedArgs, deps: CliDeps): Promise<number> {
+  deps.log('Loading learning dashboard...\n');
+
+  const workDir = resolve(deps.cwd);
+
+  // Read state files (all optional — missing files produce empty data)
+  const learningPath = resolve(workDir, 'state/learning.jsonl');
+  const tasksPath = resolve(workDir, 'state/tasks.jsonl');
+  const progressPath = resolve(workDir, 'state/progress.jsonl');
+
+  const readSafe = async (path: string): Promise<string[]> => {
+    try {
+      const content = await deps.readFile(path, 'utf-8');
+      return content.trim() ? content.trim().split('\n') : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const [learningLines, taskLines, progressLines] = await Promise.all([
+    readSafe(learningPath),
+    readSafe(tasksPath),
+    readSafe(progressPath),
+  ]);
+
+  const data = buildDashboardData(learningLines, taskLines, progressLines);
+  const output = formatDashboard(data);
+
+  for (const line of output) {
+    deps.log(line);
+  }
+
+  return 0;
+}
+
+// =============================================================================
 // HELPERS
 // =============================================================================
 
@@ -598,6 +879,9 @@ export async function dispatch(argv: string[], deps: CliDeps): Promise<number> {
 
     case 'learn':
       return runLearn(args, deps);
+
+    case 'dashboard':
+      return runDashboard(args, deps);
 
     case 'help':
       deps.log(HELP_TEXT);
