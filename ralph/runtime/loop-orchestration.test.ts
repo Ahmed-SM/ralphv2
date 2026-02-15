@@ -239,6 +239,28 @@ describe('pickNextTask', () => {
     expect(task).toBeNull();
   });
 
+  it('reads tasks from scoped state path when provided', async () => {
+    const task = makeTask({ id: 'RALPH-900' });
+    const content = taskCreateOp(task) + '\n';
+    const executor = makeMockExecutor({ './state/core/tasks.jsonl': content });
+    const context = makeContext({
+      executor,
+      statePaths: {
+        baseDir: './state/core',
+        tasks: './state/core/tasks.jsonl',
+        progress: './state/core/progress.jsonl',
+        learning: './state/core/learning.jsonl',
+        trackerOps: './state/core/tracker-ops.jsonl',
+        mode: 'core',
+        repo: 'ralph',
+        scoped: true,
+      },
+    });
+
+    const next = await pickNextTask(context);
+    expect(next?.id).toBe('RALPH-900');
+  });
+
   it('returns null when tasks file does not exist', async () => {
     const executor = makeMockExecutor();
     const context = makeContext({ executor });

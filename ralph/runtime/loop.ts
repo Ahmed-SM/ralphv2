@@ -43,15 +43,21 @@ import { validateOperation, type ValidationResult } from '../skills/discovery/va
 import { checkCompletion, createCompletionContext } from './completion.js';
 import { dispatchNotification, notifyAnomaly, notifyTaskComplete, notifyLimitReached, type NotificationDeps } from './notifications.js';
 import { loadPolicy, defaultPolicy, runRequiredChecks, allChecksPassed, type CheckResult } from './policy.js';
+import { resolveStatePaths, legacyStatePaths, type StatePaths } from './state-paths.js';
 
 export interface LoopContext {
   config: RuntimeConfig;
   executor: Executor;
   git: GitOperations;
   workDir: string;
+  statePaths?: StatePaths;
   llmProvider?: LLMProvider;
   hooks?: LoopHooks;
   policy?: RalphPolicy;
+}
+
+function getStatePaths(context: LoopContext): StatePaths {
+  return context.statePaths ?? legacyStatePaths();
 }
 
 export interface LoopResult {
@@ -241,6 +247,7 @@ export async function runPolicyChecksBeforeCommit(
   dryRun: boolean,
 ): Promise<boolean> {
   const { config, executor, git, policy } = context;
+  const statePaths = getStatePaths(context);
 
   // If no policy or no required checks, just commit
   if (!policy || policy.checks.required.length === 0) {
@@ -298,7 +305,7 @@ export async function runPolicyChecksBeforeCommit(
   }
 
   // Log a policy_violation progress event
-  await appendJsonl(executor, './state/progress.jsonl', {
+  await appendJsonl(executor, statePaths.progress, {
     type: 'policy_violation',
     taskId: task.id,
     violationType: 'checks_failed',
@@ -354,6 +361,12 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
 
   const executor = await createExecutor({ config, workDir, policy });
   const git = new GitOperations(workDir);
+  const mode = policy?.mode ?? 'core';
+  const statePaths = await resolveStatePaths(
+    (path: string) => executor.readFile(path),
+    workDir,
+    mode,
+  );
 
   // Initialize LLM provider if configured
   const llmProvider = await createDefaultLLMProvider(config.llm) ?? undefined;
@@ -363,6 +376,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     executor,
     git,
     workDir,
+    statePaths,
     llmProvider,
     policy,
   };
@@ -386,6 +400,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     console.log('Ralph loop starting...');
   }
   console.log(`Plan file: ${config.planFile}`);
+  console.log(`State base: ${statePaths.baseDir}${statePaths.scoped ? ' (scoped)' : ' (legacy)'}`);
   if (taskFilter) {
     console.log(`Task filter: ${taskFilter}`);
   }
@@ -563,11 +578,10 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     humanInterventions,
     maxTimePerTaskMs: config.loop.maxTimePerTask,
   });
-  const mode = policy?.mode ?? 'core';
   const invariant = validateInductionInvariant(runKpis, mode);
 
   if (invariant.passed) {
-    await appendJsonl(executor, './state/progress.jsonl', {
+    await appendJsonl(executor, statePaths.progress, {
       type: 'induction_invariant_validated',
       mode: invariant.mode,
       enforced: invariant.enforced,
@@ -575,7 +589,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
       timestamp: new Date().toISOString(),
     } as ProgressEvent);
   } else {
-    await appendJsonl(executor, './state/progress.jsonl', {
+    await appendJsonl(executor, statePaths.progress, {
       type: 'induction_invariant_violation',
       mode: invariant.mode,
       violations: invariant.violations,
@@ -594,7 +608,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
       },
       timestamp: new Date().toISOString(),
     };
-    await appendJsonl(executor, './state/learning.jsonl', anomalyEvent);
+    await appendJsonl(executor, statePaths.learning, anomalyEvent);
     invokeHook(context.hooks, 'onAnomaly', anomalyEvent);
     await notifyAnomaly(anomalyEvent, config.notifications).catch(() => {});
   }
@@ -622,9 +636,10 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
  * When taskFilter is provided, only that specific task ID is considered.
  */
 export async function pickNextTask(context: LoopContext, taskFilter?: string): Promise<Task | null> {
+  const statePaths = getStatePaths(context);
   const tasksLog = await readJsonl<TaskOperation>(
     context.executor,
-    './state/tasks.jsonl'
+    statePaths.tasks
   );
 
   // Derive current state
@@ -736,6 +751,7 @@ export async function executeTaskLoop(
   runCostSoFar = 0,
 ): Promise<{ success: boolean; iterations: number; reason?: string; cost: number }> {
   const { config } = context;
+  const statePaths = getStatePaths(context);
   let iterations = 0;
   let taskCost = 0;
   const startTime = Date.now();
@@ -787,7 +803,7 @@ export async function executeTaskLoop(
     taskCost += iterationCost;
 
     // Log progress (include cost)
-    await appendJsonl(context.executor, './state/progress.jsonl', {
+    await appendJsonl(context.executor, statePaths.progress, {
       type: 'iteration',
       taskId: task.id,
       iteration: iterations,
@@ -919,6 +935,7 @@ export async function updateTaskStatus(
   status: Task['status'],
   reason?: string
 ): Promise<void> {
+  const statePaths = getStatePaths(context);
   const op: TaskOperation = {
     op: 'update',
     id: taskId,
@@ -930,16 +947,16 @@ export async function updateTaskStatus(
     timestamp: new Date().toISOString(),
   };
 
-  const validation = await validateAndAppendTaskOp(context.executor, './state/tasks.jsonl', op);
+  const validation = await validateAndAppendTaskOp(context.executor, statePaths.tasks, op);
   if (!validation.valid) {
     console.log(`  Warning: Task ${taskId} status update to '${status}' had validation errors (applied anyway for resilience)`);
     // Still append to preserve backwards compatibility — validation is advisory
     // The validateAndAppendTaskOp already appended if valid, so only append if invalid
-    await appendJsonl(context.executor, './state/tasks.jsonl', op);
+    await appendJsonl(context.executor, statePaths.tasks, op);
   }
 
   if (reason) {
-    await appendJsonl(context.executor, './state/progress.jsonl', {
+    await appendJsonl(context.executor, statePaths.progress, {
       type: 'status_change',
       taskId,
       status,
@@ -957,6 +974,7 @@ export async function recordTaskCompletion(
   task: Task,
   result: { success: boolean; iterations: number; reason?: string }
 ): Promise<void> {
+  const statePaths = getStatePaths(context);
   // Compute git diff stats from the last commit (if available)
   let filesChanged = 0;
   let linesChanged = 0;
@@ -985,7 +1003,7 @@ export async function recordTaskCompletion(
     timestamp: new Date().toISOString(),
   };
 
-  await appendJsonl(context.executor, './state/learning.jsonl', event);
+  await appendJsonl(context.executor, statePaths.learning, event);
 }
 
 // =============================================================================
@@ -1011,6 +1029,7 @@ export async function runLearningAnalysis(
   result: { success: boolean; iterations: number; reason?: string }
 ): Promise<void> {
   const { config, executor, git } = context;
+  const statePaths = getStatePaths(context);
 
   try {
     // 1. Compute and record detailed task metrics
@@ -1036,18 +1055,18 @@ export async function runLearningAnalysis(
     await appendMetricEvent(
       (p: string) => executor.readFile(p),
       (p: string, c: string) => executor.writeFile(p, c),
-      './state/learning.jsonl',
+      statePaths.learning,
       { type: 'task_metric', timestamp: new Date().toISOString(), data: taskMetric }
     );
 
     // 2. Load historical metrics for pattern detection
     const allMetrics = await loadTaskMetrics(
       (p: string) => executor.readFile(p),
-      './state/learning.jsonl'
+      statePaths.learning
     );
 
     // 3. Derive current task state for context
-    const tasksLog = await readJsonl<TaskOperation>(executor, './state/tasks.jsonl');
+    const tasksLog = await readJsonl<TaskOperation>(executor, statePaths.tasks);
     const tasks = deriveTaskState(tasksLog);
 
     // 4. Compute aggregate metrics for the current period
@@ -1066,7 +1085,7 @@ export async function runLearningAnalysis(
 
     // 6. Log detected patterns to learning.jsonl and fire anomaly hooks
     for (const pattern of detectionResult.patterns) {
-      await appendJsonl(executor, './state/learning.jsonl', {
+      await appendJsonl(executor, statePaths.learning, {
         type: 'pattern_detected',
         pattern: pattern.type,
         confidence: pattern.confidence,
@@ -1101,7 +1120,7 @@ export async function runLearningAnalysis(
         await saveProposals(
           (p: string) => executor.readFile(p),
           (p: string, c: string) => executor.writeFile(p, c),
-          './state/learning.jsonl',
+          statePaths.learning,
           improvements.proposals
         );
 
@@ -1141,7 +1160,7 @@ export async function autoApplyImprovements(
   context: LoopContext,
 ): Promise<void> {
   const { executor, git } = context;
-  const learningPath = './state/learning.jsonl';
+  const learningPath = getStatePaths(context).learning;
 
   try {
     // Load pending proposals
@@ -1226,6 +1245,7 @@ export async function runGitWatcher(
   context: LoopContext,
 ): Promise<WatchResult | null> {
   const { config, executor } = context;
+  const statePaths = getStatePaths(context);
   const gwConfig = config.gitWatcher;
 
   if (!gwConfig?.enabled) {
@@ -1243,8 +1263,8 @@ export async function runGitWatcher(
       },
       readFile: (path: string) => executor.readFile(path),
       writeFile: (path: string, content: string) => executor.writeFile(path, content),
-      tasksPath: './state/tasks.jsonl',
-      progressPath: './state/progress.jsonl',
+      tasksPath: statePaths.tasks,
+      progressPath: statePaths.progress,
     };
 
     const watchOptions: WatchOptions = {
@@ -1322,6 +1342,7 @@ export async function syncTaskToTracker(
   success: boolean
 ): Promise<void> {
   const { config, executor } = context;
+  const statePaths = getStatePaths(context);
   const trackerConfig = config.tracker;
 
   // Skip if no auto-sync features enabled
@@ -1384,7 +1405,7 @@ export async function syncTaskToTracker(
         externalUrl: issue.url,
         timestamp: new Date().toISOString(),
       };
-      await appendJsonl(executor, './state/tasks.jsonl', linkOp);
+      await appendJsonl(executor, statePaths.tasks, linkOp);
       console.log(`  Tracker: created ${issue.key} for ${task.id}`);
     }
   } catch (error) {
@@ -1430,6 +1451,7 @@ export async function pullFromTracker(
   context: LoopContext,
 ): Promise<{ updated: number; errors: number; conflicts: number }> {
   const { config, executor } = context;
+  const statePaths = getStatePaths(context);
   const trackerConfig = config.tracker;
   const result = { updated: 0, errors: 0, conflicts: 0 };
 
@@ -1456,7 +1478,7 @@ export async function pullFromTracker(
     const tracker = await createTracker(fullConfig, auth);
 
     // Derive current task state
-    const tasksLog = await readJsonl<TaskOperation>(executor, './state/tasks.jsonl');
+    const tasksLog = await readJsonl<TaskOperation>(executor, statePaths.tasks);
     const tasks = deriveTaskState(tasksLog);
 
     // Find tasks with external links
@@ -1490,7 +1512,7 @@ export async function pullFromTracker(
             externalId: task.externalId!,
             timestamp: new Date().toISOString(),
           };
-          await appendJsonl(executor, './state/learning.jsonl', statusConflict);
+          await appendJsonl(executor, statePaths.learning, statusConflict);
           result.conflicts++;
 
           // Apply the status update (tracker wins)
@@ -1511,7 +1533,7 @@ export async function pullFromTracker(
             externalId: task.externalId!,
             timestamp: new Date().toISOString(),
           };
-          await appendJsonl(executor, './state/learning.jsonl', descConflict);
+          await appendJsonl(executor, statePaths.learning, descConflict);
           result.conflicts++;
 
           // Push Ralph's description back to tracker (ralph wins)

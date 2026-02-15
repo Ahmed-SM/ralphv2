@@ -18,6 +18,7 @@ export { parseArgs, resolveCommand, loadConfig, dispatch, runMain, runDiscover, 
 export { checkCompletion, checkCriteria, checkTestPassing, checkFileExists, checkValidate, createCompletionContext, type CompletionCheckResult, type CompletionContext } from './completion.js';
 export { formatNotification, sendConsole, sendSlack, sendEmail, shouldNotify, dispatchNotification, notifyAnomaly, notifyTaskComplete, notifyLimitReached, resolveNotificationEnv, type NotificationEvent, type NotificationPayload, type NotificationDeps } from './notifications.js';
 export { loadPolicy, validatePolicy, checkFileRead, checkFileWrite, checkCommand, classifyAction, requiresApproval, runRequiredChecks, allChecksPassed, createViolationEvent, enforceFileRead, enforceFileWrite, enforceCommand, defaultPolicy, type CheckRunner, type CheckResult } from './policy.js';
+export { resolveStatePaths, legacyStatePaths, slugifyRepoName, type StatePaths } from './state-paths.js';
 
 // When executed directly (tsx runtime/index.ts), run the CLI
 const scriptPath = process.argv[1]?.replace(/\\/g, '/');

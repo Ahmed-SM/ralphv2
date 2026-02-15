@@ -929,7 +929,7 @@ Ralph runs in two explicit modes to avoid goal and policy drift:
 Mode separation requirements:
 - [x] Add `mode: "core" | "delivery"` to `ralph.config.json` — mode is in `ralph.policy.json` (per Phase 43 design), loaded at loop startup.
 - [x] Enforce policy profile by mode (command/file allowlists + approval gates) — Phase 43.5: executor enforces policy on every readFile/writeFile/bash call.
-- [ ] Separate state by mode/repo (`state/core/*`, `state/delivery/<repo>/*`).
+- [x] Separate state by mode/repo (`state/core/*`, `state/delivery/<repo>/*`) → implemented via [runtime/state-paths.ts](./runtime/state-paths.ts) and loop wiring in [runtime/loop.ts](./runtime/loop.ts) with legacy fallback.
 - [ ] Block Ralph self-modification while in `delivery` mode unless explicitly approved.
 - [ ] Report KPIs per mode (platform health vs delivery performance).
 
