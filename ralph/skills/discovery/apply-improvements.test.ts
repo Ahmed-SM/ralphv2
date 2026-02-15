@@ -552,7 +552,7 @@ describe('autoApplyImprovements (integration)', () => {
         stateDir: './state',
         loop: { maxIterationsPerTask: 10, maxTasksPerRun: 50, maxCostPerRun: 50 },
         sandbox: { allowedPaths: ['.'], deniedPaths: [], allowedCommands: ['*'], deniedCommands: [], maxFileSize: 1048576, maxFiles: 1000 },
-        tracker: { type: 'jira', autoCreate: false, autoTransition: false, autoComment: false },
+        tracker: { type: 'jira', autoCreate: false, autoTransition: false, autoComment: false, autoPull: false },
         git: { autoCommit: true, commitPrefix: 'RALPH' },
         learning: { enabled: true, autoApplyImprovements: true, minConfidence: 0.7, retentionDays: 90 },
         notifications: { enabled: false },

@@ -58,6 +58,7 @@ function makeConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
       autoCreate: false,
       autoTransition: false,
       autoComment: false,
+      autoPull: false,
     },
     git: {
       autoCommit: false,

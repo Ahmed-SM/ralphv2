@@ -40,7 +40,7 @@ const MINIMAL_CONFIG = JSON.stringify({
     maxTasksPerRun: 50,
   },
   sandbox: { timeout: 30000 },
-  tracker: { type: 'jira', configPath: './integrations/jira/config.json', autoCreate: false, autoTransition: false, autoComment: false },
+  tracker: { type: 'jira', configPath: './integrations/jira/config.json', autoCreate: false, autoTransition: false, autoComment: false, autoPull: false },
   git: { autoCommit: false },
   learning: { enabled: true },
   notifications: { enabled: false },

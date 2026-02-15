@@ -8,6 +8,7 @@ import {
   recordTaskCompletion,
   runLearningAnalysis,
   syncTaskToTracker,
+  pullFromTracker,
   getTrackerAuth,
   estimateCost,
   readJsonl,
@@ -62,6 +63,7 @@ function makeConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
       autoCreate: false,
       autoTransition: false,
       autoComment: false,
+      autoPull: false,
     },
     git: {
       autoCommit: false,
@@ -1429,6 +1431,7 @@ describe('syncTaskToTracker', () => {
         autoCreate: true,
         autoTransition: true,
         autoComment: true,
+        autoPull: false,
         ...overrides,
       },
     });
@@ -1734,6 +1737,7 @@ describe('dry-run mode', () => {
         autoCreate: true,
         autoTransition: true,
         autoComment: true,
+        autoPull: false,
       },
     });
     const executor = makeMockExecutor({
@@ -2462,6 +2466,377 @@ describe('onFailure=retry', () => {
   it('LoopConfig maxRetries is optional', () => {
     const config = makeConfig();
     expect(config.loop.maxRetries).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// pullFromTracker TESTS
+// =============================================================================
+
+describe('pullFromTracker', () => {
+  const originalEnv = process.env;
+
+  const trackerConfigJson: import('../skills/normalize/tracker-interface.js').TrackerConfig = {
+    type: 'jira',
+    baseUrl: 'https://test.atlassian.net',
+    project: 'TEST',
+    issueTypeMap: {
+      epic: 'Epic',
+      feature: 'Story',
+      task: 'Task',
+      subtask: 'Sub-task',
+      bug: 'Bug',
+      refactor: 'Task',
+      docs: 'Task',
+      test: 'Task',
+      spike: 'Spike',
+    },
+    statusMap: {
+      discovered: 'Backlog',
+      pending: 'To Do',
+      in_progress: 'In Progress',
+      blocked: 'Blocked',
+      review: 'In Review',
+      done: 'Done',
+      cancelled: 'Cancelled',
+    },
+    autoCreate: true,
+    autoTransition: true,
+    autoComment: true,
+  };
+
+  let mockTracker: Tracker;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    mockTracker = {
+      name: 'test-pull',
+      connect: vi.fn(async () => {}),
+      disconnect: vi.fn(async () => {}),
+      healthCheck: vi.fn(async () => ({ healthy: true })),
+      createIssue: vi.fn(async () => ({
+        id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+        title: 'T', description: '', status: 'To Do', type: 'Task',
+        created: new Date().toISOString(), updated: new Date().toISOString(),
+      })),
+      updateIssue: vi.fn(async () => {}),
+      getIssue: vi.fn(async () => ({
+        id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+        title: 'Test', description: '', status: 'Done', type: 'Task',
+        created: new Date().toISOString(), updated: new Date().toISOString(),
+      })),
+      findIssues: vi.fn(async () => []),
+      createSubtask: vi.fn(async () => ({
+        id: '10002', key: 'TEST-2', url: 'https://test/TEST-2',
+        title: 'Subtask', description: '', status: 'To Do', type: 'Sub-task',
+        created: new Date().toISOString(), updated: new Date().toISOString(),
+      })),
+      linkIssues: vi.fn(async () => {}),
+      transitionIssue: vi.fn(async () => {}),
+      getTransitions: vi.fn(async () => []),
+      addComment: vi.fn(async () => {}),
+    };
+
+    registerTracker('test-pull', async () => mockTracker);
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  function makePullConfig(overrides: Partial<RuntimeConfig['tracker']> = {}): RuntimeConfig {
+    return makeConfig({
+      tracker: {
+        type: 'test-pull',
+        configPath: './tracker.json',
+        autoCreate: false,
+        autoTransition: false,
+        autoComment: false,
+        autoPull: true,
+        ...overrides,
+      },
+    });
+  }
+
+  function makePullExecutor(extraFiles: Record<string, string> = {}): Executor & { _fs: Map<string, string> } {
+    return makeMockExecutor({
+      './tracker.json': JSON.stringify({ ...trackerConfigJson, type: 'test-pull' }),
+      './state/tasks.jsonl': '',
+      ...extraFiles,
+    }) as Executor & { _fs: Map<string, string> };
+  }
+
+  it('skips when autoPull is false', async () => {
+    const config = makePullConfig({ autoPull: false });
+    const executor = makePullExecutor();
+    const context = makeContext({ config, executor });
+
+    const result = await pullFromTracker(context);
+
+    expect(result.updated).toBe(0);
+    expect(result.errors).toBe(0);
+    expect(mockTracker.getIssue).not.toHaveBeenCalled();
+  });
+
+  it('skips when credentials are missing', async () => {
+    const config = makePullConfig();
+    const executor = makePullExecutor();
+    const context = makeContext({ config, executor });
+    // No env vars set for test-pull
+
+    const result = await pullFromTracker(context);
+
+    expect(result.updated).toBe(0);
+    expect(mockTracker.getIssue).not.toHaveBeenCalled();
+  });
+
+  it('skips when no linked tasks exist', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+    });
+    const context = makeContext({ config, executor });
+
+    const result = await pullFromTracker(context);
+
+    expect(result.updated).toBe(0);
+    expect(mockTracker.getIssue).not.toHaveBeenCalled();
+  });
+
+  it('updates local status when tracker status differs', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+    });
+    const context = makeContext({ config, executor });
+
+    // Mock returns status 'Done' which maps to 'done'
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+      title: 'Test', description: '', status: 'Done', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+
+    const result = await pullFromTracker(context);
+
+    expect(result.updated).toBe(1);
+    expect(mockTracker.getIssue).toHaveBeenCalledWith('TEST-1');
+  });
+
+  it('skips tasks with matching status', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+    });
+    const context = makeContext({ config, executor });
+
+    // Mock returns 'In Progress' which maps to 'in_progress' (same as local)
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+      title: 'Test', description: '', status: 'In Progress', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+
+    const result = await pullFromTracker(context);
+
+    expect(result.updated).toBe(0);
+    expect(result.errors).toBe(0);
+  });
+
+  it('skips done tasks (terminal state)', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'done', externalId: 'TEST-1' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+    });
+    const context = makeContext({ config, executor });
+
+    const result = await pullFromTracker(context);
+
+    expect(mockTracker.getIssue).not.toHaveBeenCalled();
+    expect(result.updated).toBe(0);
+  });
+
+  it('skips cancelled tasks (terminal state)', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'cancelled', externalId: 'TEST-1' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+    });
+    const context = makeContext({ config, executor });
+
+    const result = await pullFromTracker(context);
+
+    expect(mockTracker.getIssue).not.toHaveBeenCalled();
+    expect(result.updated).toBe(0);
+  });
+
+  it('handles getIssue errors gracefully', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+    });
+    const context = makeContext({ config, executor });
+
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API rate limited'));
+
+    const result = await pullFromTracker(context);
+
+    expect(result.errors).toBe(1);
+    expect(result.updated).toBe(0);
+  });
+
+  it('handles non-Error throw objects', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+    });
+    const context = makeContext({ config, executor });
+
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockRejectedValue('not an error');
+
+    const result = await pullFromTracker(context);
+
+    expect(result.errors).toBe(1);
+  });
+
+  it('processes multiple linked tasks', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task1 = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1' });
+    const task2 = makeTask({ id: 'RALPH-002', status: 'pending', externalId: 'TEST-2', createdAt: '2025-01-02T00:00:00Z' });
+    const task3 = makeTask({ id: 'RALPH-003', status: 'review', externalId: 'TEST-3', createdAt: '2025-01-03T00:00:00Z' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': [task1, task2, task3].map(t => taskCreateOp(t)).join('\n') + '\n',
+    });
+    const context = makeContext({ config, executor });
+
+    let callCount = 0;
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      callCount++;
+      // task1 → Done (changed), task2 → To Do (same), task3 → Done (changed)
+      const statuses = ['Done', 'To Do', 'Done'];
+      return {
+        id: '10001', key: `TEST-${callCount}`, url: `https://test/TEST-${callCount}`,
+        title: 'Test', description: '', status: statuses[callCount - 1], type: 'Task',
+        created: new Date().toISOString(), updated: new Date().toISOString(),
+      };
+    });
+
+    const result = await pullFromTracker(context);
+
+    expect(result.updated).toBe(2);
+    expect(result.errors).toBe(0);
+    expect(mockTracker.getIssue).toHaveBeenCalledTimes(3);
+  });
+
+  it('records update operations in tasks.jsonl', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+    });
+    const context = makeContext({ config, executor });
+
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+      title: 'Test', description: '', status: 'Done', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+
+    await pullFromTracker(context);
+
+    // Check that an update operation was written to tasks.jsonl
+    const fs = (executor as Executor & { _fs: Map<string, string> })._fs;
+    const content = fs.get('./state/tasks.jsonl')!;
+    const lines = content.trim().split('\n').filter(l => l.trim());
+    // First line is the create op, subsequent lines include the update op
+    const ops = lines.map(l => JSON.parse(l) as TaskOperation);
+    const updateOps = ops.filter(o => o.op === 'update');
+    expect(updateOps.length).toBeGreaterThanOrEqual(1);
+    const lastUpdate = updateOps[updateOps.length - 1];
+    expect(lastUpdate.op).toBe('update');
+    if (lastUpdate.op === 'update') {
+      expect(lastUpdate.changes.status).toBe('done');
+    }
+  });
+
+  it('handles tracker config file read error', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    // No tracker.json file in executor
+    const executor = makeMockExecutor({
+      './state/tasks.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    const result = await pullFromTracker(context);
+
+    // Should not crash, just log and return
+    expect(result.updated).toBe(0);
+  });
+
+  it('writes progress event for status change', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+      './state/progress.jsonl': '',
+    });
+    const context = makeContext({ config, executor });
+
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+      title: 'Test', description: '', status: 'Done', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+
+    await pullFromTracker(context);
+
+    // Check that a progress event was written
+    const fs = (executor as Executor & { _fs: Map<string, string> })._fs;
+    const progressContent = fs.get('./state/progress.jsonl') ?? '';
+    if (progressContent.trim()) {
+      const events = progressContent.trim().split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
+      const statusEvents = events.filter((e: Record<string, unknown>) => e.type === 'status_change');
+      expect(statusEvents.length).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('logs pull summary with count', async () => {
+    process.env.RALPH_TEST_PULL_TOKEN = 'tok';
+    const config = makePullConfig();
+    const task = makeTask({ id: 'RALPH-001', status: 'in_progress', externalId: 'TEST-1' });
+    const executor = makePullExecutor({
+      './state/tasks.jsonl': taskCreateOp(task) + '\n',
+    });
+    const context = makeContext({ config, executor });
+
+    (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '10001', key: 'TEST-1', url: 'https://test/TEST-1',
+      title: 'Test', description: '', status: 'Done', type: 'Task',
+      created: new Date().toISOString(), updated: new Date().toISOString(),
+    });
+
+    await pullFromTracker(context);
+
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('Tracker pull:'));
   });
 });
 

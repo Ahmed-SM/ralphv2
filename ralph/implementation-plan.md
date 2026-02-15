@@ -583,6 +583,36 @@ Next steps for production readiness:
   - last priority update wins
 - [x] Total: 12 new tests (1436 total across 36 test files)
 
+### Tracker Pull Sync in Main Loop (Phase 36) ✅ COMPLETE
+- [x] Added `autoPull` field to `TrackerRuntimeConfig` in types/index.ts
+- [x] Implemented `pullFromTracker()` in runtime/loop.ts — pulls external tracker status changes into Ralph's task state
+  - Loads tracker config and auth from environment (reuses `getTrackerAuth()`)
+  - Derives current task state from tasks.jsonl operation log
+  - Fetches linked tasks' external issue status via `tracker.getIssue()`
+  - Updates local task status when tracker status differs (tracker wins per spec conflict resolution)
+  - Skips terminal states (done, cancelled) — no need to poll
+  - Graceful error handling — individual task errors counted, never crash the loop
+- [x] Wired into `runLoop()` step 0.5 (after git watcher, before task selection) — ensures `pickNextTask` sees latest external state
+- [x] Dry-run mode support — logs intent without executing
+- [x] Updated ralph.config.json with `autoPull: true`
+- [x] Exported `pullFromTracker` from runtime/index.ts
+- [x] Unit tests — 13 tests → [runtime/loop-orchestration.test.ts](./runtime/loop-orchestration.test.ts)
+  - skips when autoPull is false
+  - skips when credentials are missing
+  - skips when no linked tasks exist
+  - updates local status when tracker status differs
+  - skips tasks with matching status
+  - skips done tasks (terminal state)
+  - skips cancelled tasks (terminal state)
+  - handles getIssue errors gracefully
+  - handles non-Error throw objects
+  - processes multiple linked tasks
+  - records update operations in tasks.jsonl
+  - handles tracker config file read error
+  - writes progress event for status change
+  - logs pull summary with count
+- [x] Total: 13 new tests (1449 total across 36 test files)
+
 ## Dependencies
 
 ```

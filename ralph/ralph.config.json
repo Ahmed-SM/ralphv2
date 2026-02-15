@@ -30,7 +30,8 @@
     "configPath": "./integrations/jira/config.json",
     "autoCreate": false,
     "autoTransition": true,
-    "autoComment": true
+    "autoComment": true,
+    "autoPull": true
   },
 
   "git": {

@@ -437,6 +437,7 @@ export interface TrackerRuntimeConfig {
   autoCreate: boolean;
   autoTransition: boolean;
   autoComment: boolean;
+  autoPull: boolean;
 }
 
 export interface GitConfig {

@@ -30,7 +30,7 @@ import type {
   TrackerConfig,
   AuthConfig,
 } from '../skills/normalize/tracker-interface.js';
-import { createTracker } from '../skills/normalize/tracker-interface.js';
+import { createTracker, mapStatusToRalph } from '../skills/normalize/tracker-interface.js';
 import { executeLLMIteration, loadTaskContext, createDefaultLLMProvider } from './llm.js';
 import { detectPatterns, type DetectionContext } from '../skills/discovery/detect-patterns.js';
 import { watchGitActivity, type WatchContext, type WatchOptions, type WatchResult } from '../skills/track/index.js';
@@ -162,6 +162,15 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
 
     // 0. Run git watcher to detect external activity
     await runGitWatcher(context);
+
+    // 0.5. Pull external tracker status updates
+    if (!dryRun) {
+      await pullFromTracker(context);
+    } else {
+      if (config.tracker.autoPull) {
+        console.log('  [DRY RUN] Would pull tracker status updates');
+      }
+    }
 
     // 1. Read indices
     const agents = await executor.readFile(config.agentsFile);
@@ -1072,6 +1081,98 @@ async function loadTrackerAdapter(type: string): Promise<void> {
   if (path) {
     await import(path);
   }
+}
+
+// =============================================================================
+// TRACKER PULL SYNC
+// =============================================================================
+
+/**
+ * Pull external tracker status updates into Ralph's task state.
+ *
+ * Per the tracker-integration spec (Tracker → Ralph):
+ *   1. Issue status changed externally → Update task status
+ *   2. Issue closed externally → Mark task done
+ *
+ * Runs before task selection so that pickNextTask sees the latest state.
+ * Only processes tasks that have an externalId (already linked to tracker).
+ *
+ * Errors are logged but never crash the loop.
+ */
+export async function pullFromTracker(
+  context: LoopContext,
+): Promise<{ updated: number; errors: number }> {
+  const { config, executor } = context;
+  const trackerConfig = config.tracker;
+  const result = { updated: 0, errors: 0 };
+
+  if (!trackerConfig.autoPull) {
+    return result;
+  }
+
+  try {
+    // Load tracker configuration
+    const trackerConfigContent = await executor.readFile(trackerConfig.configPath);
+    const fullConfig: TrackerConfig = JSON.parse(trackerConfigContent);
+
+    // Get auth from environment
+    const auth = getTrackerAuth(trackerConfig.type);
+    if (!auth) {
+      console.log('  Tracker pull skipped: missing credentials');
+      return result;
+    }
+
+    // Load adapter module to ensure registration
+    await loadTrackerAdapter(trackerConfig.type);
+
+    // Create tracker instance
+    const tracker = await createTracker(fullConfig, auth);
+
+    // Derive current task state
+    const tasksLog = await readJsonl<TaskOperation>(executor, './state/tasks.jsonl');
+    const tasks = deriveTaskState(tasksLog);
+
+    // Find tasks with external links
+    const linkedTasks = Array.from(tasks.values()).filter(t => t.externalId);
+
+    if (linkedTasks.length === 0) {
+      return result;
+    }
+
+    console.log(`  Tracker pull: checking ${linkedTasks.length} linked tasks`);
+
+    for (const task of linkedTasks) {
+      // Skip terminal states — no need to poll
+      if (task.status === 'done' || task.status === 'cancelled') {
+        continue;
+      }
+
+      try {
+        const issue = await tracker.getIssue(task.externalId!);
+        const trackerStatus = mapStatusToRalph(issue.status, fullConfig);
+
+        if (trackerStatus !== task.status) {
+          // Tracker wins for status (human authority) — per spec conflict resolution
+          await updateTaskStatus(context, task.id, trackerStatus, `tracker pull: ${issue.status}`);
+          result.updated++;
+          console.log(`  Tracker pull: ${task.id} ${task.status} → ${trackerStatus}`);
+        }
+      } catch (error) {
+        result.errors++;
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        console.log(`  Tracker pull failed for ${task.id}: ${msg}`);
+      }
+    }
+
+    if (result.updated > 0) {
+      console.log(`  Tracker pull: ${result.updated} tasks updated`);
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    console.log(`  Tracker pull failed: ${msg}`);
+  }
+
+  return result;
 }
 
 // =============================================================================
