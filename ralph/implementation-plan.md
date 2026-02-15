@@ -834,6 +834,44 @@ Additional production-readiness priorities:
 
 > Prove Ralph can deliver other systems end-to-end with the same markdown-native workflow.
 
+#### New Project Runbook (v1)
+
+When Ralph starts on a new repository, execution follows this workflow:
+
+1. **Onboard with the Project Adapter Contract (config-only first)**
+   - Required inputs:
+     - `AGENTS.md`
+     - `implementation-plan.md`
+     - `ralph.config.json`
+     - Test command
+     - Build command
+     - Policy file
+   - No target-specific code paths are allowed at onboarding; only config and policy wiring.
+2. **Bootstrap baseline specs and initial plan**
+   - Generate or normalize baseline specs in `specs/*.md`.
+   - Generate `implementation-plan.md` with cited tasks and phased execution order.
+   - Persist discovered work into `state/tasks.jsonl`.
+3. **Require human planning approval before execution**
+   - Lifecycle: `draft -> pending_review -> approved | rejected -> applied`.
+   - Execution is blocked until the generated plan/spec set is approved.
+4. **Execute one task at a time under policy**
+   - Pick one task, execute in sandbox, run test/build/policy checks.
+   - On pass: mark complete, sync tracker state, record learning.
+   - On fail: rollback sandbox, apply retry/blocked logic, record anomaly.
+5. **Enforce hard safety rails**
+   - Command/file allowlists enforced by policy engine.
+   - Mandatory human approval for destructive ops, dependency changes, and production-impacting edits.
+   - Automatic rollback on failing checks.
+6. **Apply delivery workflow templates**
+   - Standard task patterns: bugfix, feature, migration, test hardening.
+   - L2 autonomy: auto-commit on green.
+   - L3 autonomy: auto-PR with policy gates.
+   - Promotion only after KPI thresholds pass for N consecutive runs.
+7. **Run drift-aware maintenance loop**
+   - Detect drift between codebase and specs/plan.
+   - Propose updates to `specs/*.md` and `implementation-plan.md`.
+   - Persist rationale and outcomes in append-only learning events.
+
 - [ ] **Define induction invariant (system-level contract):**
   - "Given only repo + markdown specs + policies, Ralph can deliver a scoped feature safely, with measurable quality."
   - Record invariant in [specs/loop-mechanics.md](./specs/loop-mechanics.md) and runtime validation checks.

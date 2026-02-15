@@ -127,6 +127,25 @@ Ralph observes its own execution and proposes improvements:
 - Test gaps
 - Failure modes
 
+### New Project Workflow
+
+When Ralph is pointed at a new repository, the workflow is:
+
+1. Onboard with a standard contract (config-only first): `AGENTS.md`, `implementation-plan.md`, `ralph.config.json`, test/build commands, and policy file.
+2. Bootstrap baseline specs and task plan: generate/normalize `specs/*.md`, generate `implementation-plan.md`, and populate `state/tasks.jsonl`.
+3. Require human approval for generated plans/specs before execution (`draft -> pending_review -> approved | rejected -> applied`).
+4. Execute one task at a time in sandbox: run task actions, then run test/build/policy checks.
+5. Apply safety behavior by default:
+   - failing checks trigger rollback
+   - retries/blocked flow is applied per config
+   - mandatory approval gates apply to destructive or production-impacting changes
+6. Progress autonomy with templates:
+   - reusable task patterns: bugfix, feature, migration, test hardening
+   - L2: auto-commit on green
+   - L3: auto-PR with policy gates
+   - promotion only after KPI thresholds pass for consecutive runs
+7. Keep a drift-aware maintenance loop: detect spec/plan drift, propose updates, and log rationale in learning state.
+
 ## Configuration
 
 See `ralph.config.json`:
