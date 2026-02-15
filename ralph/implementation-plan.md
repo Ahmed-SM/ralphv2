@@ -559,6 +559,30 @@ Next steps for production readiness:
   - autoApplyImprovements integration — 4 tests (no pending, loads proposals, full pipeline with branch, error resilience)
 - [x] Total: 44 new tests (1424 total across 36 test files)
 
+### Task Priority Support (Phase 35) ✅ COMPLETE
+- [x] Added `priority?: number` field to `Task` interface in types/index.ts (higher number = higher priority, default: 0)
+- [x] Updated `pickNextTask()` in runtime/loop.ts — sorts by priority after in_progress status, before creation time
+- [x] Aligns with loop-mechanics spec: "Highest priority pending task" → "Oldest if same priority"
+- [x] Undefined priority treated as 0 (backwards compatible with existing tasks)
+- [x] Priority persists through `create` and `update` task operations via `deriveTaskState()`
+- [x] Blocked tasks still skipped regardless of priority
+- [x] In-progress tasks still resume first regardless of priority
+- [x] Unit tests — 8 tests → [runtime/loop-orchestration.test.ts](./runtime/loop-orchestration.test.ts)
+  - higher priority picked over lower priority
+  - falls back to oldest when priorities equal
+  - undefined priority treated as 0
+  - in_progress beats higher priority pending
+  - higher priority among multiple in_progress tasks
+  - negative priority handled correctly
+  - priority persists through update operations
+  - blocked tasks skipped even with high priority
+- [x] Property-based tests — 4 tests → [runtime/loop.property.test.ts](./runtime/loop.property.test.ts)
+  - priority preserved through create operations
+  - priority updated through update operations
+  - undefined priority preserved (defaults to 0 in selection)
+  - last priority update wins
+- [x] Total: 12 new tests (1436 total across 36 test files)
+
 ## Dependencies
 
 ```

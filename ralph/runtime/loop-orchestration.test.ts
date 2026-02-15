@@ -362,6 +362,104 @@ describe('pickNextTask', () => {
     const task = await pickNextTask(context);
     expect(task!.id).toBe('T-2');
   });
+
+  // Priority-based selection tests (per loop-mechanics spec)
+  it('picks higher priority task over lower priority', async () => {
+    const content = [
+      taskCreateOp(makeTask({ id: 'T-1', status: 'pending', priority: 1, createdAt: '2025-01-01T00:00:00Z' })),
+      taskCreateOp(makeTask({ id: 'T-2', status: 'pending', priority: 5, createdAt: '2025-01-02T00:00:00Z' })),
+      taskCreateOp(makeTask({ id: 'T-3', status: 'pending', priority: 3, createdAt: '2025-01-01T00:00:00Z' })),
+    ].join('\n') + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+    const task = await pickNextTask(context);
+    expect(task!.id).toBe('T-2');
+  });
+
+  it('falls back to oldest when priorities are equal', async () => {
+    const content = [
+      taskCreateOp(makeTask({ id: 'T-1', status: 'pending', priority: 3, createdAt: '2025-01-03T00:00:00Z' })),
+      taskCreateOp(makeTask({ id: 'T-2', status: 'pending', priority: 3, createdAt: '2025-01-01T00:00:00Z' })),
+      taskCreateOp(makeTask({ id: 'T-3', status: 'pending', priority: 3, createdAt: '2025-01-02T00:00:00Z' })),
+    ].join('\n') + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+    const task = await pickNextTask(context);
+    expect(task!.id).toBe('T-2');
+  });
+
+  it('treats undefined priority as 0', async () => {
+    const content = [
+      taskCreateOp(makeTask({ id: 'T-1', status: 'pending', createdAt: '2025-01-01T00:00:00Z' })),
+      taskCreateOp(makeTask({ id: 'T-2', status: 'pending', priority: 1, createdAt: '2025-01-02T00:00:00Z' })),
+    ].join('\n') + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+    const task = await pickNextTask(context);
+    // T-2 has priority 1 > T-1's implicit 0
+    expect(task!.id).toBe('T-2');
+  });
+
+  it('in_progress still beats higher priority pending', async () => {
+    const content = [
+      taskCreateOp(makeTask({ id: 'T-1', status: 'in_progress', priority: 1 })),
+      taskCreateOp(makeTask({ id: 'T-2', status: 'pending', priority: 10 })),
+    ].join('\n') + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+    const task = await pickNextTask(context);
+    // in_progress always wins over pending regardless of priority
+    expect(task!.id).toBe('T-1');
+  });
+
+  it('picks higher priority among multiple in_progress tasks', async () => {
+    const content = [
+      taskCreateOp(makeTask({ id: 'T-1', status: 'in_progress', priority: 2, createdAt: '2025-01-01T00:00:00Z' })),
+      taskCreateOp(makeTask({ id: 'T-2', status: 'in_progress', priority: 5, createdAt: '2025-01-02T00:00:00Z' })),
+    ].join('\n') + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+    const task = await pickNextTask(context);
+    expect(task!.id).toBe('T-2');
+  });
+
+  it('handles negative priority correctly', async () => {
+    const content = [
+      taskCreateOp(makeTask({ id: 'T-1', status: 'pending', priority: -1, createdAt: '2025-01-01T00:00:00Z' })),
+      taskCreateOp(makeTask({ id: 'T-2', status: 'pending', priority: 0, createdAt: '2025-01-02T00:00:00Z' })),
+      taskCreateOp(makeTask({ id: 'T-3', status: 'pending', createdAt: '2025-01-03T00:00:00Z' })),
+    ].join('\n') + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+    const task = await pickNextTask(context);
+    // T-2 and T-3 both have priority 0, T-2 is older
+    expect(task!.id).toBe('T-2');
+  });
+
+  it('priority persists through update operations', async () => {
+    const content = [
+      taskCreateOp(makeTask({ id: 'T-1', status: 'pending', priority: 1, createdAt: '2025-01-01T00:00:00Z' })),
+      taskCreateOp(makeTask({ id: 'T-2', status: 'pending', priority: 2, createdAt: '2025-01-01T00:00:00Z' })),
+      taskUpdateOp('T-1', { priority: 10 }),
+    ].join('\n') + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+    const task = await pickNextTask(context);
+    // T-1 was updated to priority 10, should now beat T-2's priority 2
+    expect(task!.id).toBe('T-1');
+  });
+
+  it('skips blocked tasks even with high priority', async () => {
+    const content = [
+      taskCreateOp(makeTask({ id: 'T-1', status: 'pending', priority: 1 })),
+      taskCreateOp(makeTask({ id: 'T-2', status: 'pending', priority: 10, blockedBy: ['T-1'] })),
+    ].join('\n') + '\n';
+    const executor = makeMockExecutor({ './state/tasks.jsonl': content });
+    const context = makeContext({ executor });
+    const task = await pickNextTask(context);
+    // T-2 has higher priority but is blocked by T-1
+    expect(task!.id).toBe('T-1');
+  });
 });
 
 // =============================================================================

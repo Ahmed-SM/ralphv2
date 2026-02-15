@@ -79,6 +79,9 @@ export interface Task {
   // Completion
   completion?: CompletionCriteria;
 
+  // Scheduling
+  priority?: number;         // Higher number = higher priority (default: 0)
+
   // Learning
   estimate?: number;
   actual?: number;

@@ -439,3 +439,84 @@ describe('isBlocked — property-based', () => {
     );
   });
 });
+
+// =============================================================================
+// PRIORITY SORTING INVARIANTS
+// =============================================================================
+
+describe('priority invariants via deriveTaskState', () => {
+  it('priority field is preserved through create operations', () => {
+    fc.assert(
+      fc.property(
+        taskIdArb,
+        fc.integer({ min: -100, max: 100 }),
+        (id, priority) => {
+          const log: TaskOperation[] = [
+            { op: 'create', task: makeTask(id, { priority }), timestamp: '2025-01-01T00:00:00Z' },
+          ];
+          const tasks = deriveTaskState(log);
+          expect(tasks.get(id)!.priority).toBe(priority);
+        }
+      ),
+      { numRuns: 200 }
+    );
+  });
+
+  it('priority field is updated through update operations', () => {
+    fc.assert(
+      fc.property(
+        taskIdArb,
+        fc.integer({ min: -100, max: 100 }),
+        fc.integer({ min: -100, max: 100 }),
+        (id, initialPriority, updatedPriority) => {
+          const log: TaskOperation[] = [
+            { op: 'create', task: makeTask(id, { priority: initialPriority }), timestamp: '2025-01-01T00:00:00Z' },
+            { op: 'update', id, changes: { priority: updatedPriority }, timestamp: '2025-01-02T00:00:00Z' },
+          ];
+          const tasks = deriveTaskState(log);
+          expect(tasks.get(id)!.priority).toBe(updatedPriority);
+        }
+      ),
+      { numRuns: 200 }
+    );
+  });
+
+  it('undefined priority is preserved (defaults to 0 in selection)', () => {
+    fc.assert(
+      fc.property(
+        taskIdArb,
+        (id) => {
+          const log: TaskOperation[] = [
+            { op: 'create', task: makeTask(id), timestamp: '2025-01-01T00:00:00Z' },
+          ];
+          const tasks = deriveTaskState(log);
+          expect(tasks.get(id)!.priority).toBeUndefined();
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  it('last priority update wins', () => {
+    fc.assert(
+      fc.property(
+        taskIdArb,
+        fc.array(fc.integer({ min: -100, max: 100 }), { minLength: 2, maxLength: 10 }),
+        (id, priorities) => {
+          const log: TaskOperation[] = [
+            { op: 'create', task: makeTask(id, { priority: priorities[0] }), timestamp: '2025-01-01T00:00:00Z' },
+            ...priorities.slice(1).map((p, i) => ({
+              op: 'update' as const,
+              id,
+              changes: { priority: p },
+              timestamp: new Date(Date.UTC(2025, 0, 2 + i)).toISOString(),
+            })),
+          ];
+          const tasks = deriveTaskState(log);
+          expect(tasks.get(id)!.priority).toBe(priorities[priorities.length - 1]);
+        }
+      ),
+      { numRuns: 200 }
+    );
+  });
+});

@@ -316,7 +316,11 @@ export async function pickNextTask(context: LoopContext, taskFilter?: string): P
       // In-progress first
       if (a.status === 'in_progress' && b.status !== 'in_progress') return -1;
       if (b.status === 'in_progress' && a.status !== 'in_progress') return 1;
-      // Then by creation time
+      // Then by priority (higher number = higher priority)
+      const aPriority = a.priority ?? 0;
+      const bPriority = b.priority ?? 0;
+      if (aPriority !== bPriority) return bPriority - aPriority;
+      // Then by creation time (oldest first)
       return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
     });
 
