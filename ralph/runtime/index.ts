@@ -5,7 +5,7 @@
  * For CLI usage, see cli.ts (the bin entry point).
  */
 
-import { readFile, writeFile } from 'fs/promises';
+import { readFile, writeFile, mkdir } from 'fs/promises';
 import { dispatch } from './cli.js';
 
 // Export modules for programmatic use
@@ -14,7 +14,8 @@ export { createExecutor, Executor, GitOperations } from './executor.js';
 export { createSandbox, Sandbox, printSandboxStatus, type FileChange } from './sandbox.js';
 export { executeLLMIteration, executeToolCall, buildSystemPrompt, buildIterationPrompt, interpretResponse, loadTaskContext, createLLMProvider, createDefaultLLMProvider, AGENT_TOOLS } from './llm.js';
 export { AnthropicProvider, OpenAIProvider, createProvider, resolveApiKey, formatAnthropicMessages, formatAnthropicTools, parseAnthropicResponse, mapAnthropicStopReason, formatOpenAIMessages, formatOpenAITools, parseOpenAIResponse, mapOpenAIFinishReason } from './llm-providers.js';
-export { parseArgs, resolveCommand, loadConfig, dispatch, runMain, runDiscover, runStatus, runDashboard, runReview, runApprove, runReject, buildDashboardData, formatDashboard, replayTaskOps, HELP_TEXT, BANNER, DEFAULT_CONFIG_PATH, type ParsedArgs, type CliCommand, type CliDeps, type DashboardData } from './cli.js';
+export { parseArgs, resolveCommand, loadConfig, dispatch, runMain, runDiscover, runStatus, runSync, runLearn, runBootstrap, runDashboard, runReview, runApprove, runReject, buildDashboardData, formatDashboard, replayTaskOps, HELP_TEXT, BANNER, DEFAULT_CONFIG_PATH, type ParsedArgs, type CliCommand, type CliDeps, type DashboardData } from './cli.js';
+export { detectBootstrapInputs, buildBootstrapArtifacts, buildSystemContextSpec, buildArchitectureSpec, buildDeliveryWorkflowSpec, buildQualityGatesSpec, buildImplementationPlan, type BootstrapInputs } from './bootstrap.js';
 export { checkCompletion, checkCriteria, checkTestPassing, checkFileExists, checkValidate, createCompletionContext, type CompletionCheckResult, type CompletionContext } from './completion.js';
 export { formatNotification, sendConsole, sendSlack, sendEmail, shouldNotify, dispatchNotification, notifyAnomaly, notifyTaskComplete, notifyLimitReached, resolveNotificationEnv, type NotificationEvent, type NotificationPayload, type NotificationDeps } from './notifications.js';
 export { loadPolicy, validatePolicy, checkFileRead, checkFileWrite, checkCommand, classifyAction, requiresApproval, runRequiredChecks, allChecksPassed, createViolationEvent, enforceFileRead, enforceFileWrite, enforceCommand, defaultPolicy, type CheckRunner, type CheckResult } from './policy.js';
@@ -29,6 +30,7 @@ if (isDirectExecution) {
   dispatch(process.argv.slice(2), {
     readFile: (path: string, encoding: 'utf-8') => readFile(path, encoding),
     writeFile: (path: string, content: string) => writeFile(path, content),
+    mkdir: (path: string, opts: { recursive: boolean }) => mkdir(path, opts),
     cwd: process.cwd(),
     log: (msg: string) => console.log(msg),
     error: (msg: string) => console.error(msg),

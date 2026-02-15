@@ -981,15 +981,15 @@ Bootstrap assets:
   - "Given only repo + markdown specs + policies, Ralph can deliver a scoped feature safely, with measurable quality."
   - Record invariant in [specs/loop-mechanics.md](./specs/loop-mechanics.md) and runtime validation checks → implemented in [runtime/loop.ts](./runtime/loop.ts) (`computeRunKpis`, `validateInductionInvariant`, run-end validation events).
   - Add KPI set for each run: success rate, cycle time, escaped defects, rollback rate, human interventions → emitted as run KPI payload in invariant validation events.
-- [ ] **Add external-system bootstrap pipeline:**
+- [x] **Add external-system bootstrap pipeline:** ✅ COMPLETE
   - Input: arbitrary repository + minimal policy/config
   - Output: generated `specs/*.md` baseline and `implementation-plan.md` for that target system
-  - Generate spec set (initial minimum):
+  - Generate spec set (initial minimum): ✅ via `ralph bootstrap`
     - `specs/system-context.md`
     - `specs/architecture.md`
     - `specs/delivery-workflow.md`
     - `specs/quality-gates.md`
-  - Generate task graph in `implementation-plan.md` with explicit phase/task citations.
+  - Generate task graph in `implementation-plan.md` with explicit phase/task citations. ✅
 - [ ] **Human-on-the-loop planning review and approval:**
   - Reuse review lifecycle: draft → pending_review → approved | rejected → applied
   - Add review command(s) for generated plans/specs before execution starts
@@ -1115,7 +1115,7 @@ Phase 43 complete: ✅
 Phase 44 planned: 🟡
 
 - [x] Induction invariant encoded as enforceable runtime contract
-- [ ] Bootstrap generation of `specs/*.md` and `implementation-plan.md` for external repos
+- [x] Bootstrap generation of `specs/*.md` and `implementation-plan.md` for external repos
 - [ ] Human review required for generated plans before execution
 - [ ] Drift-aware spec/plan tailoring loop with append-only rationale
 - [ ] External pilot proof across 3 heterogeneous repositories

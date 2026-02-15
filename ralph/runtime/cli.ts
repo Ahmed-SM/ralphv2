@@ -7,18 +7,20 @@
 
 import { resolve } from 'path';
 import type { RuntimeConfig, TrackerRuntimeConfig } from '../types/index.js';
+import { buildBootstrapArtifacts, detectBootstrapInputs } from './bootstrap.js';
 
 // =============================================================================
 // TYPES
 // =============================================================================
 
-export type CliCommand = 'run' | 'discover' | 'sync' | 'status' | 'learn' | 'dashboard' | 'review' | 'approve' | 'reject' | 'help';
+export type CliCommand = 'run' | 'discover' | 'sync' | 'status' | 'learn' | 'bootstrap' | 'dashboard' | 'review' | 'approve' | 'reject' | 'help';
 
 export interface ParsedArgs {
   command: CliCommand;
   configPath: string;
   dryRun: boolean;
   taskFilter: string | undefined;
+  repoPath?: string;
   /** Positional argument (e.g. proposal ID for approve/reject) */
   positional?: string;
   /** Reason flag (e.g. --reason=<text> for reject) */
@@ -30,6 +32,8 @@ export interface CliDeps {
   readFile: (path: string, encoding: 'utf-8') => Promise<string>;
   /** Write a file to disk (undefined = dry-run / read-only) */
   writeFile?: (path: string, content: string) => Promise<void>;
+  /** Create directory recursively (optional; fallback uses node:fs/promises) */
+  mkdir?: (path: string, opts: { recursive: boolean }) => Promise<void>;
   /** Current working directory */
   cwd: string;
   /** Console output */
@@ -57,6 +61,7 @@ Commands:
   sync        Sync tasks with tracker
   status      Show current task status
   learn       Analyze and propose improvements
+  bootstrap   Generate baseline specs and implementation plan for a repo
   dashboard   Show learning summary report
   review      List pending improvement proposals
   approve     Approve and apply a proposal (ralph approve <id>)
@@ -67,6 +72,7 @@ Options:
   --config=<path>   Path to config file (default: ralph.config.json)
   --dry-run         Don't make changes, just show what would happen
   --task=<id>       Process only the specified task
+  --repo=<path>     Target repository path for bootstrap (default: cwd)
 
 Examples:
   ralph                    # Run full loop
@@ -75,6 +81,8 @@ Examples:
   ralph status             # Show task status
   ralph sync               # Sync with Jira only
   ralph learn              # Run learning analysis
+  ralph bootstrap          # Generate baseline delivery docs
+  ralph bootstrap --repo=../my-repo  # Bootstrap another repo
   ralph dashboard          # Show learning summary
   ralph review             # List pending proposals
   ralph approve IMPROVE-001  # Approve and apply a proposal
@@ -88,7 +96,7 @@ export const BANNER = [
   '\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d',
 ].join('\n');
 
-const VALID_COMMANDS = new Set<CliCommand>(['run', 'discover', 'sync', 'status', 'learn', 'dashboard', 'review', 'approve', 'reject', 'help']);
+const VALID_COMMANDS = new Set<CliCommand>(['run', 'discover', 'sync', 'status', 'learn', 'bootstrap', 'dashboard', 'review', 'approve', 'reject', 'help']);
 
 // =============================================================================
 // PARSING
@@ -109,13 +117,16 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const taskArg = argv.find(a => a.startsWith('--task='));
   const taskFilter = taskArg?.split('=')[1];
 
+  const repoArg = argv.find(a => a.startsWith('--repo='));
+  const repoPath = repoArg?.split('=').slice(1).join('=');
+
   const reasonArg = argv.find(a => a.startsWith('--reason='));
   const reason = reasonArg?.split('=').slice(1).join('=');
 
   // Positional argument: first non-flag arg after the command
   const positional = argv.slice(1).find(a => !a.startsWith('--'));
 
-  return { command, configPath, dryRun, taskFilter, positional, reason };
+  return { command, configPath, dryRun, taskFilter, repoPath, positional, reason };
 }
 
 /**
@@ -511,6 +522,86 @@ export async function runLearn(args: ParsedArgs, deps: CliDeps): Promise<number>
   deps.log(`  Pending proposals: ${pending.length}`);
   deps.log('--- END ---\n');
 
+  return 0;
+}
+
+// =============================================================================
+// BOOTSTRAP
+// =============================================================================
+
+/**
+ * Generate baseline specs and implementation plan for a target repository.
+ *
+ * Creates missing files:
+ * - specs/system-context.md
+ * - specs/architecture.md
+ * - specs/delivery-workflow.md
+ * - specs/quality-gates.md
+ * - implementation-plan.md
+ */
+export async function runBootstrap(args: ParsedArgs, deps: CliDeps): Promise<number> {
+  deps.log('Running external-system bootstrap...\n');
+
+  const workDir = resolve(deps.cwd);
+  const repoRoot = resolve(workDir, args.repoPath || '.');
+  deps.log(`Target repo: ${repoRoot}`);
+  if (args.dryRun) deps.log('Mode: DRY RUN (no files will be written)');
+
+  if (!args.dryRun && !deps.writeFile) {
+    deps.error('Bootstrap requires write access (CliDeps.writeFile is undefined).');
+    return 1;
+  }
+
+  const input = await detectBootstrapInputs(repoRoot, deps.readFile);
+  const artifacts = buildBootstrapArtifacts(input);
+  const artifactEntries = Object.entries(artifacts);
+
+  if (!args.dryRun) {
+    const specsDir = resolve(repoRoot, 'specs');
+    if (deps.mkdir) {
+      await deps.mkdir(specsDir, { recursive: true });
+    } else {
+      const fsPromises = await deps.importModule('node:fs/promises') as {
+        mkdir: (path: string, opts: { recursive: boolean }) => Promise<void>;
+      };
+      await fsPromises.mkdir(specsDir, { recursive: true });
+    }
+  }
+
+  let created = 0;
+  let skipped = 0;
+
+  for (const [relPath, content] of artifactEntries) {
+    const absPath = resolve(repoRoot, relPath);
+
+    let exists = false;
+    try {
+      await deps.readFile(absPath, 'utf-8');
+      exists = true;
+    } catch {
+      exists = false;
+    }
+
+    if (exists) {
+      skipped++;
+      deps.log(`  [skip] ${relPath} (already exists)`);
+      continue;
+    }
+
+    if (args.dryRun) {
+      created++;
+      deps.log(`  [create] ${relPath}`);
+      continue;
+    }
+
+    await deps.writeFile!(absPath, content);
+    created++;
+    deps.log(`  [created] ${relPath}`);
+  }
+
+  deps.log('');
+  deps.log(`Bootstrap summary: created=${created}, skipped=${skipped}`);
+  deps.log('Bootstrap complete.');
   return 0;
 }
 
@@ -1127,6 +1218,9 @@ export async function dispatch(argv: string[], deps: CliDeps): Promise<number> {
 
     case 'learn':
       return runLearn(args, deps);
+
+    case 'bootstrap':
+      return runBootstrap(args, deps);
 
     case 'dashboard':
       return runDashboard(args, deps);

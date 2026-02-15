@@ -9,6 +9,7 @@ import {
   runStatus,
   runSync,
   runLearn,
+  runBootstrap,
   runDashboard,
   runReview,
   runApprove,
@@ -90,6 +91,11 @@ describe('parseArgs', () => {
     expect(result.command).toBe('learn');
   });
 
+  it('parses bootstrap command', () => {
+    const result = parseArgs(['bootstrap']);
+    expect(result.command).toBe('bootstrap');
+  });
+
   it('parses help command', () => {
     const result = parseArgs(['help']);
     expect(result.command).toBe('help');
@@ -124,6 +130,12 @@ describe('parseArgs', () => {
   it('parses --config=<path> flag', () => {
     const result = parseArgs(['run', '--config=custom.json']);
     expect(result.configPath).toBe('custom.json');
+  });
+
+  it('parses --repo=<path> flag', () => {
+    const result = parseArgs(['bootstrap', '--repo=../target-repo']);
+    expect(result.command).toBe('bootstrap');
+    expect(result.repoPath).toBe('../target-repo');
   });
 
   it('parses multiple flags together', () => {
@@ -171,6 +183,7 @@ describe('resolveCommand', () => {
     expect(resolveCommand('sync')).toBe('sync');
     expect(resolveCommand('status')).toBe('status');
     expect(resolveCommand('learn')).toBe('learn');
+    expect(resolveCommand('bootstrap')).toBe('bootstrap');
     expect(resolveCommand('help')).toBe('help');
   });
 
@@ -575,6 +588,7 @@ describe('constants', () => {
     expect(HELP_TEXT).toContain('sync');
     expect(HELP_TEXT).toContain('status');
     expect(HELP_TEXT).toContain('learn');
+    expect(HELP_TEXT).toContain('bootstrap');
     expect(HELP_TEXT).toContain('review');
     expect(HELP_TEXT).toContain('approve');
     expect(HELP_TEXT).toContain('reject');
@@ -585,6 +599,7 @@ describe('constants', () => {
     expect(HELP_TEXT).toContain('--config');
     expect(HELP_TEXT).toContain('--dry-run');
     expect(HELP_TEXT).toContain('--task');
+    expect(HELP_TEXT).toContain('--repo');
   });
 
   it('BANNER contains Ralph name', () => {
@@ -660,6 +675,17 @@ describe('dispatch integration', () => {
     expect(config.loop.dryRun).toBe(true);
     expect(config.loop.taskFilter).toBe('RALPH-001');
     expect(config.loop.maxTasksPerRun).toBe(1);
+  });
+
+  it('runs bootstrap via dispatch', async () => {
+    const deps = makeDeps({
+      readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
+    });
+
+    const code = await dispatch(['bootstrap', '--dry-run'], deps);
+    expect(code).toBe(0);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('Running external-system bootstrap');
   });
 });
 
@@ -1293,6 +1319,84 @@ describe('runLearn', () => {
     expect(code).toBe(0);
     const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
     expect(logged).toContain('DRY RUN');
+  });
+});
+
+// =============================================================================
+// runBootstrap
+// =============================================================================
+
+describe('runBootstrap', () => {
+  it('returns error when writeFile is unavailable in non-dry-run mode', async () => {
+    const deps = makeDeps({
+      writeFile: undefined,
+      readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
+    });
+    const args: ParsedArgs = { command: 'bootstrap', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runBootstrap(args, deps);
+    expect(code).toBe(1);
+    const err = (deps.error as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(err).toContain('requires write access');
+  });
+
+  it('shows files to create in dry-run mode', async () => {
+    const deps = makeDeps({
+      readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
+    });
+    const args: ParsedArgs = { command: 'bootstrap', configPath: DEFAULT_CONFIG_PATH, dryRun: true, taskFilter: undefined };
+
+    const code = await runBootstrap(args, deps);
+    expect(code).toBe(0);
+
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('[create] specs/system-context.md');
+    expect(logged).toContain('[create] specs/architecture.md');
+    expect(logged).toContain('[create] specs/delivery-workflow.md');
+    expect(logged).toContain('[create] specs/quality-gates.md');
+    expect(logged).toContain('[create] implementation-plan.md');
+  });
+
+  it('creates missing files in target repo', async () => {
+    const writeFile = vi.fn().mockResolvedValue(undefined);
+    const mkdir = vi.fn().mockResolvedValue(undefined);
+    const readFile = vi.fn().mockImplementation(async (path: string) => {
+      if (path.endsWith('/package.json')) return JSON.stringify({ name: 'target-repo' });
+      throw new Error('ENOENT');
+    });
+
+    const deps = makeDeps({ readFile, writeFile, mkdir });
+    const args: ParsedArgs = {
+      command: 'bootstrap',
+      configPath: DEFAULT_CONFIG_PATH,
+      dryRun: false,
+      taskFilter: undefined,
+      repoPath: '../target',
+    };
+
+    const code = await runBootstrap(args, deps);
+    expect(code).toBe(0);
+    expect(mkdir).toHaveBeenCalledTimes(1);
+    expect(writeFile).toHaveBeenCalledTimes(5);
+  });
+
+  it('skips files that already exist', async () => {
+    const writeFile = vi.fn().mockResolvedValue(undefined);
+    const mkdir = vi.fn().mockResolvedValue(undefined);
+    const readFile = vi.fn().mockImplementation(async (path: string) => {
+      if (path.endsWith('/package.json')) return JSON.stringify({ name: 'target-repo' });
+      if (path.endsWith('/specs/system-context.md')) return '# existing';
+      throw new Error('ENOENT');
+    });
+
+    const deps = makeDeps({ readFile, writeFile, mkdir });
+    const args: ParsedArgs = { command: 'bootstrap', configPath: DEFAULT_CONFIG_PATH, dryRun: false, taskFilter: undefined };
+
+    const code = await runBootstrap(args, deps);
+    expect(code).toBe(0);
+    expect(writeFile).toHaveBeenCalledTimes(4);
+    const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]).join('\n');
+    expect(logged).toContain('[skip] specs/system-context.md');
   });
 });
 

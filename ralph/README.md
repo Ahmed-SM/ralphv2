@@ -43,6 +43,8 @@ npm run ralph -- dashboard
 npm run ralph -- review
 npm run ralph -- approve IMPROVE-001
 npm run ralph -- reject IMPROVE-001 --reason="not applicable"
+npm run ralph -- bootstrap
+npm run ralph -- bootstrap --repo=../target-repo
 ```
 
 ## New Project Bootstrap Pack
@@ -227,7 +229,7 @@ npm run learn
 - ✅ Ralph v1 MVP complete
 - ✅ Phases 1-43.5 complete (foundation through policy enforcement integration)
 - ✅ Test suite: 1752 tests across 38 test files
-- ✅ CLI commands available: `run`, `discover`, `sync`, `status`, `learn`, `dashboard`, `review`, `approve`, `reject`
+- ✅ CLI commands available: `run`, `discover`, `sync`, `status`, `learn`, `bootstrap`, `dashboard`, `review`, `approve`, `reject`
 - ✅ Policy engine: file/command allowlists, approval gates, required checks, violation logging
 - 🟡 Phase 44 planned: Inductive External Delivery OS
 - ⏳ Remaining live validation: Jira credentials, external-system induction pilots
