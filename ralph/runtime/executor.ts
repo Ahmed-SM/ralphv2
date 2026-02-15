@@ -5,12 +5,14 @@
  * It integrates with just-bash for sandboxed bash and TypeScript execution.
  */
 
-import type { Sandbox as SandboxInterface, BashResult, RuntimeConfig } from '../types/index.js';
+import type { Sandbox as SandboxInterface, BashResult, RuntimeConfig, RalphPolicy, PolicyViolation } from '../types/index.js';
 import { createSandbox, Sandbox as SandboxImpl } from './sandbox.js';
+import { checkFileRead, checkFileWrite, checkCommand, requiresApproval } from './policy.js';
 
 export interface ExecutorOptions {
   config: RuntimeConfig;
   workDir: string;
+  policy?: RalphPolicy;
 }
 
 /**
@@ -27,16 +29,57 @@ export async function createExecutor(options: ExecutorOptions): Promise<Executor
 export class Executor implements SandboxInterface {
   private options: ExecutorOptions;
   private sandbox: SandboxImpl;
+  private _policy: RalphPolicy | undefined;
+  private _violations: PolicyViolation[] = [];
 
   constructor(options: ExecutorOptions, sandbox: SandboxImpl) {
     this.options = options;
     this.sandbox = sandbox;
+    this._policy = options.policy;
   }
 
   /**
-   * Execute a bash command in the sandbox
+   * Get/set the active policy. Can be set after construction
+   * (e.g., when the loop loads policy from disk).
+   */
+  get policy(): RalphPolicy | undefined {
+    return this._policy;
+  }
+
+  set policy(p: RalphPolicy | undefined) {
+    this._policy = p;
+  }
+
+  /**
+   * Get accumulated policy violations (for logging/reporting).
+   */
+  get violations(): PolicyViolation[] {
+    return this._violations;
+  }
+
+  /**
+   * Execute a bash command in the sandbox.
+   * Enforces command policy if a policy is active.
    */
   async bash(command: string): Promise<BashResult> {
+    if (this._policy) {
+      const check = checkCommand(this._policy, command);
+      if (!check.allowed) {
+        this._violations.push(check.violation!);
+        return {
+          exitCode: 126,
+          stdout: '',
+          stderr: `Policy violation: command denied — ${check.violation!.rule}`,
+        };
+      }
+
+      // Check if command requires approval (logged but not blocked — approval is advisory)
+      const approval = requiresApproval(this._policy, command);
+      if (approval.requiresApproval) {
+        console.log(`  Policy: command "${command}" requires approval (${approval.approvalClass})`);
+      }
+    }
+
     return this.sandbox.bash(command);
   }
 
@@ -63,18 +106,36 @@ export class Executor implements SandboxInterface {
   }
 
   /**
-   * Read a file from the sandbox filesystem
+   * Read a file from the sandbox filesystem.
+   * Enforces file read policy if a policy is active.
    */
   async readFile(filePath: string): Promise<string> {
+    if (this._policy) {
+      const check = checkFileRead(this._policy, filePath, this.options.workDir);
+      if (!check.allowed) {
+        this._violations.push(check.violation!);
+        throw new Error(`Policy violation: file read denied — ${check.violation!.rule}`);
+      }
+    }
+
     return this.sandbox.readFile(filePath);
   }
 
   /**
-   * Write a file to the sandbox filesystem
+   * Write a file to the sandbox filesystem.
+   * Enforces file write policy if a policy is active.
    *
    * Changes are buffered until flush() is called.
    */
   async writeFile(filePath: string, content: string): Promise<void> {
+    if (this._policy) {
+      const check = checkFileWrite(this._policy, filePath, this.options.workDir);
+      if (!check.allowed) {
+        this._violations.push(check.violation!);
+        throw new Error(`Policy violation: file write denied — ${check.violation!.rule}`);
+      }
+    }
+
     return this.sandbox.writeFile(filePath, content);
   }
 

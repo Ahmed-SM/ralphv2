@@ -873,6 +873,41 @@ Additional production-readiness priorities:
   - edge cases — 3 tests (empty allow lists, exact file deny, unique class deduplication)
 - [x] Total: 128 new tests (1710 total across 37 test files)
 
+### Policy Enforcement Integration (Phase 43.5) ✅ COMPLETE
+
+- [x] Wired policy engine into Executor — readFile, writeFile, bash enforce policy checks
+  - Delivery mode: blocks non-allowlisted files/commands
+  - Core mode: allows by default, blocks only deny-listed
+  - Denied operations return PolicyViolation (exit code 126 for bash, throws for file ops)
+  - Approval-required actions logged but not blocked (advisory)
+  - Policy violations accumulated for reporting
+- [x] Policy getter/setter on Executor — can set/clear policy after construction
+- [x] Wired policy loading into `runLoop()` — loads `ralph.policy.json` at startup, falls back to `defaultPolicy()`
+- [x] Added `policy` field to `LoopContext` — available throughout loop
+- [x] Implemented `runPolicyChecksBeforeCommit()` — runs required checks (test/build/lint/typecheck) before git commit
+  - Flushes sandbox before running checks (so checks see actual file state)
+  - On pass: commits changes
+  - On fail with `rollbackOnFail`: rolls back sandbox
+  - Logs individual check results ([PASS]/[FAIL])
+  - Logs `policy_violation` progress event on failure
+  - Respects `dryRun` and `autoCommit` settings
+- [x] Replaced direct commit logic in `runLoop()` with `runPolicyChecksBeforeCommit()`
+  - Initial success path uses policy checks before commit
+  - Retry success path uses policy checks before commit
+  - Check failures treated as task failures (blocked status)
+- [x] Created `ralph.policy.json` for Ralph's own repo (core mode, permissive)
+- [x] Exported `runPolicyChecksBeforeCommit` from runtime/index.ts
+- [x] Unit tests — 42 tests → [runtime/policy-enforcement.test.ts](./runtime/policy-enforcement.test.ts)
+  - bash command policy — 8 tests (block denied, allow allowlisted, block non-allowlisted in delivery, allow in core, block denied in core, record violations, log approval, passthrough without policy)
+  - readFile policy — 5 tests (block denied, block .git/objects, allow allowlisted, record violations, passthrough)
+  - writeFile policy — 8 tests (block denied, block .git, allow allowlisted, block non-allowlisted delivery, allow in core, block denied in core, record violations, passthrough)
+  - policy getter/setter — 3 tests (set after construction, clear policy, enforce new policy)
+  - violations accumulation — 2 tests (accumulate multiple, start empty)
+  - runPolicyChecksBeforeCommit — 10 tests (commit without policy, commit without checks, commit on pass, fail+rollback, no rollback without flag, flush before checks, dry-run, no-commit, violation event, individual results)
+  - LoopContext policy — 2 tests (optional, accepts policy)
+  - defaultPolicy integration — 4 tests (allows reads, allows writes, blocks denied commands, allows general commands)
+- [x] Total: 42 new tests (1752 total across 38 test files)
+
 ### Inductive External Delivery OS (Phase 44) 🟡 PLANNED
 
 > Prove Ralph can deliver other systems end-to-end with the same markdown-native workflow.
@@ -892,8 +927,8 @@ Ralph runs in two explicit modes to avoid goal and policy drift:
   - Governance: human-on-the-loop approvals for destructive, dependency, and production-impacting changes.
 
 Mode separation requirements:
-- [ ] Add `mode: "core" | "delivery"` to `ralph.config.json`.
-- [ ] Enforce policy profile by mode (command/file allowlists + approval gates).
+- [x] Add `mode: "core" | "delivery"` to `ralph.config.json` — mode is in `ralph.policy.json` (per Phase 43 design), loaded at loop startup.
+- [x] Enforce policy profile by mode (command/file allowlists + approval gates) — Phase 43.5: executor enforces policy on every readFile/writeFile/bash call.
 - [ ] Separate state by mode/repo (`state/core/*`, `state/delivery/<repo>/*`).
 - [ ] Block Ralph self-modification while in `delivery` mode unless explicitly approved.
 - [ ] Report KPIs per mode (platform health vs delivery performance).
@@ -1056,5 +1091,5 @@ Phase 44 planned: 🟡
 
 ---
 
-_Status: Ralph v1 MVP complete; Phase 43 (Policy Engine) complete; Phase 44 planned for external-system induction_
+_Status: Ralph v1 MVP complete; Phase 43.5 (Policy Enforcement Integration) complete; Phase 44 planned for external-system induction_
 _Human review: Required for generated plans/specs and production deployment_

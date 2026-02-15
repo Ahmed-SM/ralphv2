@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "mode": "core",
+  "files": {
+    "allowRead": ["."],
+    "allowWrite": ["."],
+    "denyRead": [".git/objects"],
+    "denyWrite": [".git/objects", "node_modules"]
+  },
+  "commands": {
+    "allow": [],
+    "deny": ["rm -rf /", "sudo"]
+  },
+  "approval": {
+    "requiredFor": [],
+    "requireReason": false
+  },
+  "checks": {
+    "required": [],
+    "rollbackOnFail": false
+  }
+}

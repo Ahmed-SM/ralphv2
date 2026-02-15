@@ -25,6 +25,7 @@ import type {
   LLMUsage,
   LLMConfig,
   LoopHooks,
+  RalphPolicy,
 } from '../types/index.js';
 import { createExecutor, Executor, GitOperations } from './executor.js';
 import type {
@@ -41,6 +42,7 @@ import { recordTaskMetrics, computeAggregateMetrics, appendMetricEvent, loadTask
 import { validateOperation, type ValidationResult } from '../skills/discovery/validate-task.js';
 import { checkCompletion, createCompletionContext } from './completion.js';
 import { dispatchNotification, notifyAnomaly, notifyTaskComplete, notifyLimitReached, type NotificationDeps } from './notifications.js';
+import { loadPolicy, defaultPolicy, runRequiredChecks, allChecksPassed, type CheckResult } from './policy.js';
 
 export interface LoopContext {
   config: RuntimeConfig;
@@ -49,6 +51,7 @@ export interface LoopContext {
   workDir: string;
   llmProvider?: LLMProvider;
   hooks?: LoopHooks;
+  policy?: RalphPolicy;
 }
 
 export interface LoopResult {
@@ -87,6 +90,93 @@ export function estimateCost(
 }
 
 // =============================================================================
+// POLICY CHECKS
+// =============================================================================
+
+/**
+ * Run required policy checks (test, build, lint, typecheck) before committing.
+ *
+ * If all checks pass, flushes the sandbox and commits.
+ * If any check fails and rollbackOnFail is set, rolls back the sandbox.
+ *
+ * Returns true if checks passed (or no checks required), false if failed.
+ */
+export async function runPolicyChecksBeforeCommit(
+  context: LoopContext,
+  task: Task,
+  dryRun: boolean,
+): Promise<boolean> {
+  const { config, executor, git, policy } = context;
+
+  // If no policy or no required checks, just commit
+  if (!policy || policy.checks.required.length === 0) {
+    if (config.git.autoCommit && !dryRun) {
+      await executor.flush();
+      await git.add('.');
+      await git.commit(`${config.git.commitPrefix}${task.id}: ${task.title}`);
+    } else if (config.git.autoCommit && dryRun) {
+      console.log(`  [DRY RUN] Would commit: ${config.git.commitPrefix}${task.id}: ${task.title}`);
+    }
+    return true;
+  }
+
+  // Build the commands map from config
+  const commands: Record<string, string> = {};
+  const rawCommands = (config as unknown as Record<string, unknown>).commands as Record<string, string> | undefined;
+  if (rawCommands) {
+    Object.assign(commands, rawCommands);
+  }
+  // Also check sandbox commands (the config might have test/build commands elsewhere)
+  if (!commands.test) commands.test = 'npm test';
+  if (!commands.build) commands.build = 'npm run build';
+  if (!commands.lint) commands.lint = 'npm run lint';
+  if (!commands.typecheck) commands.typecheck = 'npm run typecheck';
+
+  // Flush first so checks run against the actual file state
+  await executor.flush();
+
+  console.log(`  Policy: running ${policy.checks.required.length} required checks...`);
+  const checkResults = await runRequiredChecks(policy, commands, executor);
+
+  // Log individual check results
+  for (const cr of checkResults) {
+    const status = cr.passed ? 'PASS' : 'FAIL';
+    console.log(`  Policy: [${status}] ${cr.check} (${cr.duration}ms)`);
+  }
+
+  if (allChecksPassed(checkResults)) {
+    // All checks passed — commit
+    if (config.git.autoCommit && !dryRun) {
+      await git.add('.');
+      await git.commit(`${config.git.commitPrefix}${task.id}: ${task.title}`);
+    } else if (config.git.autoCommit && dryRun) {
+      console.log(`  [DRY RUN] Would commit: ${config.git.commitPrefix}${task.id}: ${task.title}`);
+    }
+    return true;
+  }
+
+  // Checks failed
+  console.log(`  Policy: required checks failed`);
+
+  if (policy.checks.rollbackOnFail) {
+    executor.rollback();
+    console.log(`  Policy: sandbox rolled back due to failed checks`);
+  }
+
+  // Log a policy_violation progress event
+  await appendJsonl(executor, './state/progress.jsonl', {
+    type: 'policy_violation',
+    taskId: task.id,
+    violationType: 'checks_failed',
+    target: checkResults.filter(cr => !cr.passed).map(cr => cr.check).join(', '),
+    rule: 'required checks must pass before commit',
+    timestamp: new Date().toISOString(),
+  } as ProgressEvent);
+
+  return false;
+}
+
+// =============================================================================
 // HOOK INVOCATION
 // =============================================================================
 
@@ -115,7 +205,20 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
   const dryRun = config.loop.dryRun ?? false;
   const taskFilter = config.loop.taskFilter;
 
-  const executor = await createExecutor({ config, workDir });
+  // Load policy from disk (falls back to permissive default)
+  let policy: RalphPolicy | undefined;
+  if (config.policyFile) {
+    const { readFile } = await import('fs/promises');
+    policy = await loadPolicy(config.policyFile, (p, enc) => readFile(p, enc)) ?? undefined;
+    if (policy) {
+      console.log(`Policy loaded: mode=${policy.mode}, checks=${policy.checks.required.join(',') || 'none'}`);
+    } else {
+      console.log(`Policy file ${config.policyFile} not found or invalid, using default policy`);
+      policy = defaultPolicy();
+    }
+  }
+
+  const executor = await createExecutor({ config, workDir, policy });
   const git = new GitOperations(workDir);
 
   // Initialize LLM provider if configured
@@ -127,6 +230,7 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     git,
     workDir,
     llmProvider,
+    policy,
   };
 
   const result: LoopResult = {
@@ -211,18 +315,20 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
     let taskSuccess = taskResult.success;
 
     if (taskResult.success) {
-      await updateTaskStatus(context, task.id, 'done');
-      result.tasksCompleted++;
+      // Run policy checks and commit (checks may rollback on failure)
+      const checksOk = await runPolicyChecksBeforeCommit(context, task, dryRun);
 
-      // Commit changes (skip in dry-run mode)
-      if (config.git.autoCommit && !dryRun) {
-        await executor.flush();
-        await git.add('.');
-        await git.commit(`${config.git.commitPrefix}${task.id}: ${task.title}`);
-      } else if (config.git.autoCommit && dryRun) {
-        console.log(`  [DRY RUN] Would commit: ${config.git.commitPrefix}${task.id}: ${task.title}`);
+      if (checksOk) {
+        await updateTaskStatus(context, task.id, 'done');
+        result.tasksCompleted++;
+      } else {
+        // Policy checks failed — treat as task failure
+        taskSuccess = false;
+        console.log(`  Task ${task.id} succeeded but policy checks failed`);
       }
-    } else {
+    }
+
+    if (!taskSuccess && !taskResult.success) {
       // Rollback sandbox to discard failed task's pending changes
       executor.rollback();
       console.log(`  Sandbox rolled back for failed task ${task.id}`);
@@ -239,19 +345,18 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
           result.totalCost += retryResult.cost;
 
           if (retryResult.success) {
-            await updateTaskStatus(context, task.id, 'done');
-            result.tasksCompleted++;
-            taskSuccess = true;
+            const retryChecksOk = await runPolicyChecksBeforeCommit(context, task, dryRun);
 
-            // Commit changes (skip in dry-run mode)
-            if (config.git.autoCommit && !dryRun) {
-              await executor.flush();
-              await git.add('.');
-              await git.commit(`${config.git.commitPrefix}${task.id}: ${task.title}`);
-            } else if (config.git.autoCommit && dryRun) {
-              console.log(`  [DRY RUN] Would commit: ${config.git.commitPrefix}${task.id}: ${task.title}`);
+            if (retryChecksOk) {
+              await updateTaskStatus(context, task.id, 'done');
+              result.tasksCompleted++;
+              taskSuccess = true;
+            } else {
+              console.log(`  Retry attempt ${attempt} succeeded but policy checks failed`);
+              // Continue to next retry attempt
             }
-            break;
+
+            if (taskSuccess) break;
           } else {
             // Rollback between retry attempts
             executor.rollback();
@@ -261,13 +366,22 @@ export async function runLoop(config: RuntimeConfig, workDir: string): Promise<L
       }
 
       if (!taskSuccess) {
-        await updateTaskStatus(context, task.id, 'blocked', taskResult.reason);
+        await updateTaskStatus(context, task.id, 'blocked', taskResult.reason || 'policy checks failed');
         result.tasksFailed++;
 
         if (config.loop.onFailure === 'stop') {
           console.log('Task failed, stopping loop');
           break;
         }
+      }
+    } else if (!taskSuccess) {
+      // Policy checks failed on initial success (no retry for check failures from task success)
+      await updateTaskStatus(context, task.id, 'blocked', 'policy checks failed');
+      result.tasksFailed++;
+
+      if (config.loop.onFailure === 'stop') {
+        console.log('Task failed (policy checks), stopping loop');
+        break;
       }
     }
 
