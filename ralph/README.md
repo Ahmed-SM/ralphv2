@@ -45,6 +45,18 @@ npm run ralph -- approve IMPROVE-001
 npm run ralph -- reject IMPROVE-001 --reason="not applicable"
 ```
 
+## New Project Bootstrap Pack
+
+Use the templates in `templates/new-project/` to start Ralph on any target repository:
+
+1. Copy `templates/new-project/AGENTS.md` to target repo root as `AGENTS.md`.
+2. Copy `templates/new-project/implementation-plan.md` to target repo root.
+3. Copy `templates/new-project/ralph.config.json` to target repo root and adjust tracker and command values.
+4. Copy `templates/new-project/ralph.policy.json` to target repo root and tune allowlists/approval gates.
+5. Ensure specs exist (or generate): `specs/system-context.md`, `specs/architecture.md`, `specs/delivery-workflow.md`, `specs/quality-gates.md`.
+6. Run discovery to populate `state/tasks.jsonl`.
+7. Keep `loop.dryRun=true` for the first run until human review approves execution.
+
 ## Structure
 
 ```
@@ -164,11 +176,18 @@ See `ralph.config.json`:
 
 ```json
 {
+  "mode": "delivery",
   "planFile": "./implementation-plan.md",
   "agentsFile": "./AGENTS.md",
+  "policyFile": "./ralph.policy.json",
+  "commands": {
+    "test": "npm test",
+    "build": "npm run build"
+  },
   "loop": {
     "maxIterationsPerTask": 10,
-    "maxTasksPerRun": 50
+    "maxTasksPerRun": 50,
+    "dryRun": true
   },
   "tracker": {
     "type": "jira",
@@ -206,14 +225,15 @@ npm run learn
 ## Current Status
 
 - ✅ Ralph v1 MVP complete
-- ✅ Phases 1-42 complete (foundation through improvement review CLI)
-- ✅ Test suite: 1582 tests across 36 test files
+- ✅ Phases 1-43 complete (foundation through policy engine)
+- ✅ Test suite: 1710 tests across 37 test files
 - ✅ CLI commands available: `run`, `discover`, `sync`, `status`, `learn`, `dashboard`, `review`, `approve`, `reject`
-- 🟡 Phase 43 planned: Inductive External Delivery OS
+- ✅ Policy engine: file/command allowlists, approval gates, required checks, violation logging
+- 🟡 Phase 44 planned: Inductive External Delivery OS
 - ⏳ Remaining live validation: Jira credentials, external-system induction pilots
 - ⏳ Additional production-readiness priorities tracked in `implementation-plan.md`:
   - Project Adapter Contract (config-only onboarding)
-  - Hard safety rails before autonomy increase
+  - ~~Hard safety rails before autonomy increase~~ ✅ Phase 43
   - Standardized delivery workflow templates
 
 ## References

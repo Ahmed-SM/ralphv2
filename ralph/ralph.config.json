@@ -2,6 +2,7 @@
   "$schema": "./schemas/config.schema.json",
   "planFile": "./implementation-plan.md",
   "agentsFile": "./AGENTS.md",
+  "policyFile": "./ralph.policy.json",
 
   "loop": {
     "maxIterationsPerTask": 10,

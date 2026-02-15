@@ -1,0 +1,38 @@
+{
+  "mode": "delivery",
+  "planFile": "./implementation-plan.md",
+  "agentsFile": "./AGENTS.md",
+  "policyFile": "./ralph.policy.json",
+  "commands": {
+    "test": "npm test",
+    "build": "npm run build"
+  },
+  "loop": {
+    "maxIterationsPerTask": 10,
+    "maxTasksPerRun": 20,
+    "onFailure": "retry",
+    "maxRetries": 1,
+    "dryRun": true
+  },
+  "git": {
+    "autoCommit": false,
+    "commitPrefix": "RALPH-",
+    "branchPrefix": "ralph/"
+  },
+  "tracker": {
+    "type": "jira",
+    "autoCreate": false,
+    "autoTransition": true,
+    "autoComment": true
+  },
+  "learning": {
+    "enabled": true,
+    "autoApplyImprovements": false,
+    "minConfidence": 0.7
+  },
+  "notifications": {
+    "onAnomaly": true,
+    "onComplete": false,
+    "channel": "console"
+  }
+}

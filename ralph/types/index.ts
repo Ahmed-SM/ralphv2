@@ -415,12 +415,65 @@ export interface LLMConfig {
 }
 
 // =============================================================================
+// POLICY TYPES
+// =============================================================================
+
+export type RalphMode = 'core' | 'delivery';
+
+export type ApprovalClass =
+  | 'destructive_ops'
+  | 'dependency_changes'
+  | 'production_impacting_edits';
+
+export type CheckType = 'test' | 'build' | 'lint' | 'typecheck';
+
+export interface RalphPolicy {
+  version: number;
+  mode: RalphMode;
+  files: {
+    allowRead: string[];
+    allowWrite: string[];
+    denyRead: string[];
+    denyWrite: string[];
+  };
+  commands: {
+    allow: string[];
+    deny: string[];
+  };
+  approval: {
+    requiredFor: ApprovalClass[];
+    requireReason: boolean;
+  };
+  checks: {
+    required: CheckType[];
+    rollbackOnFail: boolean;
+  };
+}
+
+export type PolicyViolationType = 'file_read_denied' | 'file_write_denied' | 'command_denied' | 'approval_required';
+
+export interface PolicyViolation {
+  type: PolicyViolationType;
+  target: string;
+  rule: string;
+  timestamp: string;
+}
+
+export interface PolicyCheckResult {
+  allowed: boolean;
+  violation?: PolicyViolation;
+  requiresApproval?: boolean;
+  approvalClass?: ApprovalClass;
+}
+
+// =============================================================================
 // CONFIG TYPES
 // =============================================================================
 
 export interface RuntimeConfig {
   planFile: string;
   agentsFile: string;
+  policyFile?: string;
   loop: LoopConfig;
   sandbox: SandboxConfig;
   tracker: TrackerRuntimeConfig;

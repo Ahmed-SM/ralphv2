@@ -505,7 +505,7 @@ Additional production-readiness priorities:
 - [ ] 3. Create a "Project Adapter Contract"
   - Standard inputs for any target repo: `AGENTS.md`, `implementation-plan.md`, `specs/*.md`, `ralph.config.json`, test command, build command, policy file.
   - No custom code first; config-only onboarding.
-- [ ] 5. Add hard safety rails before autonomy increase
+- [x] 5. Add hard safety rails before autonomy increase ✅ Phase 43
   - Policy engine for command/file allowlists.
   - Mandatory human approval for destructive ops, dependency changes, production-impacting edits.
   - Automatic rollback on failing checks.
@@ -830,7 +830,50 @@ Additional production-readiness priorities:
 - [x] Unit tests — resolveCommand: 3 tests (review, approve, reject)
 - [x] Total: 47 new tests (1582 total across 36 test files)
 
-### Inductive External Delivery OS (Phase 43) 🟡 PLANNED
+### Policy Engine (Phase 43) ✅ COMPLETE
+
+- [x] Added policy types to types/index.ts (RalphPolicy, RalphMode, ApprovalClass, CheckType, PolicyViolation, PolicyCheckResult, PolicyViolationType)
+- [x] Added `policyFile` optional field to `RuntimeConfig`
+- [x] Implement policy.ts → [runtime/policy.ts](./runtime/policy.ts)
+  - `loadPolicy()` — loads and validates ralph.policy.json from disk
+  - `validatePolicy()` — validates policy schema (version, mode, files, commands, approval, checks)
+  - `checkFileRead()` — enforces file read allowlists and denylists per mode
+  - `checkFileWrite()` — enforces file write allowlists and denylists per mode
+  - `checkCommand()` — enforces command allowlists and denylists per mode
+  - `classifyAction()` — classifies actions into approval classes (destructive_ops, dependency_changes, production_impacting_edits)
+  - `requiresApproval()` — checks if action needs human approval per policy
+  - `runRequiredChecks()` — runs required checks (test/build/lint/typecheck) via runner
+  - `allChecksPassed()` — checks if all required checks passed
+  - `createViolationEvent()` — creates policy_violation progress events for logging
+  - `enforceFileRead()` / `enforceFileWrite()` / `enforceCommand()` — convenience enforcement with violation events
+  - `defaultPolicy()` — returns minimal permissive core-mode policy
+- [x] Delivery mode: non-allowlisted paths and commands are blocked (strict enforcement)
+- [x] Core mode: non-allowlisted paths and commands are allowed (deny list only)
+- [x] Deny lists always take precedence over allow lists
+- [x] Action classification patterns: destructive (rm, git reset, DROP TABLE, etc.), dependency (npm/yarn/pnpm/pip/cargo), production (deploy, Dockerfile, CI/CD, terraform, k8s)
+- [x] Exported all functions from runtime/index.ts
+- [x] Updated ralph.config.json with policyFile field
+- [x] Unit tests — 128 tests → [runtime/policy.test.ts](./runtime/policy.test.ts)
+  - validatePolicy — 20 tests (valid, null, non-object, missing/invalid fields, accumulation, all check types, core mode)
+  - loadPolicy — 5 tests (valid load, missing file, invalid JSON, invalid structure, correct path)
+  - checkFileRead — 9 tests (allowRead, denyRead, subdirectory deny, deny precedence, delivery blocking, core permissive, "." wildcard, timestamp, absolute paths)
+  - checkFileWrite — 9 tests (allowWrite, denyWrite, node_modules, dist, delivery blocking, core permissive, deny precedence, state dir, tests dir)
+  - checkCommand — 10 tests (allow, prefix matching, deny, curl|sh, deny precedence, delivery blocking, core permissive, git status, git diff, violation target)
+  - classifyAction — 24 tests (destructive: rm/git reset/clean/push force/DROP/TRUNCATE/DELETE; dependency: npm/yarn/pnpm/pip/cargo/package.json/lockfiles; production: deploy/Dockerfile/docker-compose/workflows/terraform/k8s; safe actions; multiple classes)
+  - requiresApproval — 7 tests (destructive, dependency, production, safe, empty requiredFor, allowed flag, violation type)
+  - runRequiredChecks — 11 tests (all checks, passing, failing, missing command, runner error, non-Error, stdout/stderr, duration, empty checks, correct command)
+  - allChecksPassed — 4 tests (all pass, any fail, empty, all fail)
+  - createViolationEvent — 3 tests (event shape, taskId inclusion, taskId omission)
+  - enforceFileRead — 2 tests (allowed, denied with event)
+  - enforceFileWrite — 2 tests (allowed, denied with event)
+  - enforceCommand — 2 tests (allowed, denied with event)
+  - defaultPolicy — 9 tests (valid, core mode, read/write defaults, deny .git/objects, deny sudo/rm, no approval, no checks, no rollback)
+  - delivery mode integration — 4 tests (block writes, block commands, allow within allowWrite, allow read with ".")
+  - core mode integration — 4 tests (allow writes, allow commands, still block denied paths, still block denied commands)
+  - edge cases — 3 tests (empty allow lists, exact file deny, unique class deduplication)
+- [x] Total: 128 new tests (1710 total across 37 test files)
+
+### Inductive External Delivery OS (Phase 44) 🟡 PLANNED
 
 > Prove Ralph can deliver other systems end-to-end with the same markdown-native workflow.
 > Goal: an agentic delivery system for all kinds of projects, with human-on-the-loop governance at every autonomy level.
@@ -858,6 +901,12 @@ Mode separation requirements:
 #### New Project Runbook (v1)
 
 When Ralph starts on a new repository, execution follows this workflow:
+
+Bootstrap assets:
+- `templates/new-project/AGENTS.md`
+- `templates/new-project/implementation-plan.md`
+- `templates/new-project/ralph.config.json`
+- `templates/new-project/ralph.policy.json`
 
 1. **Onboard with the Project Adapter Contract (config-only first)**
    - Required inputs:
@@ -934,7 +983,9 @@ Phase 5 (Learning) ✅
     ↓
 Phase 6 (Just-Bash) ✅
     ↓
-Phase 43 (Inductive External Delivery) 🟡
+Phase 43 (Policy Engine) ✅
+    ↓
+Phase 44 (Inductive External Delivery) 🟡
 ```
 
 ## Success Criteria
@@ -982,7 +1033,20 @@ Phase 6 complete: ✅
 - [x] Resource usage tracking
 - [x] Autonomous loop execution tested
 
-Phase 43 planned: 🟡
+Phase 43 complete: ✅
+
+- [x] Policy engine types defined (RalphPolicy, ApprovalClass, PolicyViolation, etc.)
+- [x] Policy loading and validation from ralph.policy.json
+- [x] File read/write access enforcement (allowlists + denylists)
+- [x] Command access enforcement (allowlists + denylists)
+- [x] Delivery mode strict enforcement (non-allowlisted = blocked)
+- [x] Core mode permissive enforcement (deny list only)
+- [x] Action classification for approval gates (destructive, dependency, production)
+- [x] Required check runner (test/build/lint/typecheck)
+- [x] Violation event logging for anomaly surfacing
+- [x] 128 unit tests
+
+Phase 44 planned: 🟡
 
 - [ ] Induction invariant encoded as enforceable runtime contract
 - [ ] Bootstrap generation of `specs/*.md` and `implementation-plan.md` for external repos
@@ -992,5 +1056,5 @@ Phase 43 planned: 🟡
 
 ---
 
-_Status: Ralph v1 MVP complete; Phase 43 planned for external-system induction_
+_Status: Ralph v1 MVP complete; Phase 43 (Policy Engine) complete; Phase 44 planned for external-system induction_
 _Human review: Required for generated plans/specs and production deployment_

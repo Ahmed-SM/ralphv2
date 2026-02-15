@@ -42,6 +42,7 @@ See: [implementation-plan.md](./implementation-plan.md)
 | [specs/tracker-integration.md](./specs/tracker-integration.md) | How trackers are abstracted |
 | [specs/learning-system.md](./specs/learning-system.md) | How Ralph learns and improves |
 | [specs/loop-mechanics.md](./specs/loop-mechanics.md) | The Ralph-loop execution model |
+| [specs/policy-engine.md](./specs/policy-engine.md) | Policy schema and safety gates |
 
 ## Integration Index
 

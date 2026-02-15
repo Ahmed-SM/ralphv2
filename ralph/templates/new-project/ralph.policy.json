@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "mode": "delivery",
+  "files": {
+    "allowRead": ["."],
+    "allowWrite": ["src", "tests", "docs", "specs", "state"],
+    "denyRead": [".env", ".git/objects"],
+    "denyWrite": [".git", "node_modules", "dist"]
+  },
+  "commands": {
+    "allow": [
+      "npm test",
+      "npm run build",
+      "npm run lint",
+      "npm run typecheck",
+      "git status",
+      "git diff"
+    ],
+    "deny": ["rm -rf /", "sudo", "curl | sh"]
+  },
+  "approval": {
+    "requiredFor": [
+      "destructive_ops",
+      "dependency_changes",
+      "production_impacting_edits"
+    ],
+    "requireReason": true
+  },
+  "checks": {
+    "required": ["test", "build"],
+    "rollbackOnFail": true
+  }
+}
